@@ -2,6 +2,13 @@
 R code for “Online Inference under Over-parameterized Models with Hidden Confounders”
 
 
+
+## Structure
+- Folder 1: For Fig xxx
+  - xxx.R
+  - xxx.source (写出来重要的几个文件即可）
+- Folder 2: Code of Fig xxx
+
 ## Reference
 Shuyan CHEN, Xingdong FENG, Yeheng GE, Tao LI, Mengyun WU.  Online Inference under Over-parameterized Models with Hidden Confounders. Manuscript. (Alphabetical Order)
 
