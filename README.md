@@ -18,6 +18,6 @@ The code repository is released by Shuyan CHEN(chenst@ustc.edu.cn) for replicati
 
 ## About
 Dr. Ge and Dr. Chen began this project during their doctoral studies at Shanghai University of Finance and Economics (SUFE).
-Dr. CHEN is now postdoc researcher in USTC.
-Dr. GE is now postdoc fellow at DSAI, PolyU.
+Dr. CHEN is now a postdoc researcher in USTC.
+Dr. GE is now a postdoc fellow at DSAI, PolyU.
 Professors FENG, LI, and WU are faculty members of the School of Statistics and Data Science, SUFE.
