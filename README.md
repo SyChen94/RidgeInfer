@@ -17,7 +17,7 @@ Shuyan CHEN, Xingdong FENG, Yeheng GE, Tao LI, Mengyun WU.  Online Inference und
 The code repository is released by Shuyan CHEN(chenst@ustc.edu.cn) for replication of the numerical results in the manuscript.
 
 ## About
+Dr. Ge and Dr. Chen began this project during their doctoral studies at Shanghai University of Finance and Economics (SUFE).
 Dr. CHEN is now postdoc researcher in USTC.
 Dr. GE is now postdoc fellow at DSAI, PolyU.
-Dr.CHEN and Dr.GE got their Ph.D in Statistics from School of Staitistics and Data Science, Shanghai University of Finance and Economics.
-Prof. FENG, Prof. LI and Prof. WU are faculty memebers of School of Statistics and Data Science, Shanghai University of Finance and Economics.
+Professors FENG, LI, and WU are faculty members of the School of Statistics and Data Science, SUFE.
