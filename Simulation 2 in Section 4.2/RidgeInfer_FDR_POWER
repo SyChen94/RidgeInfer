@@ -1,0 +1,271 @@
+nBatch = 500
+simu_n=100
+i=1
+alpha_bh=0.1
+
+while (i <= simu_n) {
+  {
+    b = 1
+    N = b* nBatch
+    P_control = 1000
+    
+    lam=0.1
+    P_hidden <- 3
+    error_sigma <- 5
+    Sigma_type <- "CONS"
+    Sigma_rho <- 0.3
+    if (Sigma_type == "CONS") {
+      SigmaX <- matrix(Sigma_rho, P_control, P_control)
+      diag(SigmaX) <- rep(1, P_control)
+      
+      E <- mnormt::rmnorm(N, mean = rep(0, P_control), varcov = SigmaX)
+    }
+    num_nonzero=20
+    H <- 1 * matrix(rnorm(N * P_hidden, mean = 0, sd = 1), N, P_hidden, byrow = TRUE)
+    Gamma <- matrix(rnorm(P_hidden * P_control, mean = 0, sd = 1.25), P_hidden, P_control, byrow = TRUE)/sqrt(P_hidden)
+    X <- E + H %*% Gamma
+    delta <- matrix(rnorm(P_hidden * 1, mean = 0, sd = 1), P_hidden, 1, byrow = TRUE) /sqrt(P_hidden)
+    epsilon <- matrix(rnorm(N * 1, mean = 0, sd = 1), N, 1, byrow = TRUE)*sqrt(error_sigma)
+    beta=c(rep(1,num_nonzero),rep(0,P_control-num_nonzero))
+    
+    Y <- X %*% beta +  H %*% delta + epsilon
+    data <- list(Y = Y, X = X)
+    {
+      #####################################################
+      Ind_begin = seq(1,N,b)
+      Data_inBatch = list()
+      for(ib in 1:nBatch){
+        b_begin = Ind_begin[ib]
+        b_end = Ind_begin[ib]+b-1
+        b_index = b_begin:b_end
+        Yb = Y[b_index]
+        Xb = X[b_index,]
+        Data_inBatch[[ib]] = list(Yb=Yb,Xb=Xb)
+      }
+      
+      list_Allbatch = list()
+      results_list <- list()
+      iib=1
+      #####################################################
+      if(1){
+        ib = 1
+        data_ib = Data_inBatch[[ib]]
+        D = matrix(data_ib$Xb,ncol=P_control)
+        Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+        for(ib in 2:(N/20)){
+          data_ib = Data_inBatch[[ib]]
+          D=rbind(D,data_ib$Xb)
+          Y=rbind(Y,data_ib$Yb)
+        }
+        
+        b = nrow(D)
+        Nb = 0 + b
+        
+        S_D  <- crossprod(D)         # p x p
+        S_DY <- crossprod(D, Y)    # p x 1
+        S_Y <-  sum(Y^2)
+        
+        eta = 0.1*max(abs(cov(Y,D)))/(ncol(D))
+        
+        A_mat <- S_D+diag(P_control)* eta
+      
+        
+        chol_ok <- TRUE
+        Rchol <- tryCatch(chol(A_mat), error = function(e) { chol_ok <<- FALSE; NULL })
+        if (!chol_ok) {
+          # fallback: add small jitter
+          #jitter_eps <- 1e-8 * max(1, diag(A_mat))
+          #diag(A_mat) <- diag(A_mat) + jitter_eps
+          Rchol <- tryCatch(chol(A_mat), error = function(e) stop("Cholesky failed even after jitter"))
+          if (verbose) message(sprintf("Cholesky jitter applied at batch %d", L))
+        }
+        # Inverse via chol2inv
+        M_mat <- chol2inv(Rchol)  # full p x p inverse of A_mat. Equivalent to solve(A_mat).
+        
+        trace_term <- sum(diag(S_D %*% M_mat))
+        denom_df <- 1 - (1/Nb) * trace_term
+        if (denom_df <= 0) {
+          # numerical safeguard: set denom small positive
+          denom_df <- max(denom_df, 1e-8)
+        }
+        sigma_e2_hat <- (1/Nb) * (1/denom_df) * ( S_Y - as.numeric(crossprod(S_DY, M_mat %*% S_DY)) )
+        sigma_e2_hat <- as.numeric((sigma_e2_hat))
+        if (sigma_e2_hat <= 0) sigma_e2_hat <- max(sigma_e2_hat, 1e-8)
+        alpha_hat_vec <- numeric(P_control)
+        se_hat_vec    <- numeric(P_control)
+        
+        for (j in seq_len(P_control)) {
+          # Build indexing
+          idx_all <- seq_len(P_control)
+          idx_minusj <- idx_all[-j]
+          
+          # Block entries from S_D and S_DY
+          s_jj    <- as.numeric(S_D[j, j])
+          s_minusj_j <- as.numeric(S_D[idx_minusj, j])    # (p-1) x 1
+          s_j_minusj <- as.numeric(S_D[j, idx_minusj])    # 1 x (p-1)
+          C_nop   <- S_D[idx_minusj, idx_minusj, drop = FALSE] # (p-1)x(p-1)
+          
+          c_j     <- as.numeric(S_DY[j])                   # scalar
+          d_minusj <- as.numeric(S_DY[idx_minusj])        # (p-1)x1
+          
+          # Blocks of M
+          M_jj    <- M_mat[j, j]
+          M_j_minusj <- matrix(M_mat[j, idx_minusj],nrow=1)    # 1 x (p-1)
+          M_minusj_j <- matrix(M_mat[idx_minusj, j],ncol=1)   # (p-1) x 1
+          M_minusj_minusj <- M_mat[idx_minusj, idx_minusj, drop = FALSE]
+          
+          # Omega_j via block identity: Omega = M_{-j,-j} - (1/m11) m12 m12^T
+          Omega_j <- M_minusj_minusj - (1.0 / M_jj) * (M_minusj_j %*% M_j_minusj)
+          # Compute auxiliary vectors u and w:
+          u_j <- Omega_j %*% d_minusj
+          w_j <- Omega_j %*% s_minusj_j
+          
+          # numerator and denominator
+          num_j <- c_j - crossprod(s_j_minusj, u_j)    # scalar
+          den_j <- s_jj - crossprod(s_j_minusj, w_j)   # scalar
+          
+          # handle degenerate den
+          den_j <- as.numeric(den_j)
+          if (abs(den_j) < 1e-12) den_j <- sign(den_j) * 1e-12
+          
+          alpha_hat <- as.numeric(num_j / den_j)
+          alpha_hat_vec[j] <- alpha_hat
+          
+          # variance numerator: s - 2 b^T w + w^T C_nop w
+          var_num <- as.numeric(s_jj - 2 * crossprod(s_j_minusj, w_j) + crossprod(w_j, C_nop %*% w_j))
+          var_alpha_j <- (var_num / (den_j^2)) * sigma_e2_hat
+          # numerical safety
+          if (var_alpha_j < 0) var_alpha_j <- max(var_alpha_j, 1e-12)
+          se_hat_vec[j] <- sqrt(var_alpha_j)
+          
+        } # end for j
+        
+        
+        #print(CI)
+        results_list[[iib]] <- list(
+          alpha_hat = alpha_hat_vec,
+          se_hat    = se_hat_vec
+        )
+        
+        list_Allbatch= list(
+          Nb=Nb,
+          S_D = S_D,         # p x p
+          S_DY =  S_DY,    # p x 1
+          S_Y =  S_Y
+        )
+      }
+      
+      for(iib in 2:20){
+        LastRound = list_Allbatch
+        S_D=LastRound$S_D
+        S_DY=LastRound$S_DY
+        S_Y=LastRound$S_Y
+        Nb=LastRound$Nb
+        
+        ib = Nb+1
+        data_ib = Data_inBatch[[ib]]
+        D = matrix(data_ib$Xb,ncol=P_control)
+        Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+        for(ib in (Nb+2):(Nb+N/20)){
+          data_ib = Data_inBatch[[ib]]
+          D=rbind(D,data_ib$Xb)
+          Y=rbind(Y,data_ib$Yb)
+        }
+        b = nrow(D)
+        Nb = b + Nb
+        S_D  <- S_D + crossprod(D)
+        S_DY <- S_DY + crossprod(D, Y)
+        S_Y <- S_Y + sum(Y^2)
+        A_mat <- S_D+diag(P_control)* eta
+        
+        
+        chol_ok <- TRUE
+        Rchol <- tryCatch(chol(A_mat), error = function(e) { chol_ok <<- FALSE; NULL })
+        if (!chol_ok) {
+          # fallback: add small jitter
+          jitter_eps <- 1e-8 * max(1, diag(A_mat))
+          diag(A_mat) <- diag(A_mat) + jitter_eps
+          Rchol <- tryCatch(chol(A_mat), error = function(e) stop("Cholesky failed even after jitter"))
+          if (verbose) message(sprintf("Cholesky jitter applied at batch %d", L))
+        }
+        # Inverse via chol2inv
+        M_mat <- chol2inv(Rchol)  # full p x p inverse of A_mat. Equivalent to solve(A_mat).
+        
+        trace_term <- sum(diag(S_D %*% M_mat))
+        denom_df <- 1 - (1/Nb) * trace_term
+        if (denom_df <= 0) {
+          # numerical safeguard: set denom small positive
+          denom_df <- max(denom_df, 1e-8)
+        }
+        sigma_e2_hat <- (1/Nb) * (1/denom_df) * ( S_Y - as.numeric(crossprod(S_DY, M_mat %*% S_DY)) )
+        sigma_e2_hat <- as.numeric((sigma_e2_hat))
+        if (sigma_e2_hat <= 0) sigma_e2_hat <- max(sigma_e2_hat, 1e-8)
+        alpha_hat_vec <- numeric(P_control)
+        se_hat_vec    <- numeric(P_control)
+        
+        
+        for (j in seq_len(P_control)) {
+          # Build indexing
+          idx_all <- seq_len(P_control)
+          idx_minusj <- idx_all[-j]
+          
+          # Block entries from S_D and S_DY
+          s_jj    <- as.numeric(S_D[j, j])
+          s_minusj_j <- as.numeric(S_D[idx_minusj, j])    # (p-1) x 1
+          s_j_minusj <- as.numeric(S_D[j, idx_minusj])    # 1 x (p-1)
+          C_nop   <- S_D[idx_minusj, idx_minusj, drop = FALSE] # (p-1)x(p-1)
+          
+          c_j     <- as.numeric(S_DY[j])                   # scalar
+          d_minusj <- as.numeric(S_DY[idx_minusj])        # (p-1)x1
+          
+          # Blocks of M
+          M_jj    <- M_mat[j, j]
+          M_j_minusj <- matrix(M_mat[j, idx_minusj],nrow=1)    # 1 x (p-1)
+          M_minusj_j <- matrix(M_mat[idx_minusj, j],ncol=1)    # (p-1) x 1
+          M_minusj_minusj <- M_mat[idx_minusj, idx_minusj, drop = FALSE]
+          
+          # Omega_j via block identity: Omega = M_{-j,-j} - (1/m11) m12 m12^T
+          Omega_j <- M_minusj_minusj - (1.0 / M_jj) * (M_minusj_j %*% M_j_minusj)
+          # Compute auxiliary vectors u and w:
+          u_j <- Omega_j %*% d_minusj
+          w_j <- Omega_j %*% s_minusj_j
+          
+          # numerator and denominator
+          num_j <- c_j - crossprod(s_j_minusj, u_j)    # scalar
+          den_j <- s_jj - crossprod(s_j_minusj, w_j)   # scalar
+          
+          # handle degenerate den
+          den_j <- as.numeric(den_j)
+          if (abs(den_j) < 1e-12) den_j <- sign(den_j) * 1e-12
+          
+          alpha_hat <- as.numeric(num_j / den_j)
+          alpha_hat_vec[j] <- alpha_hat
+          
+          # variance numerator: s - 2 b^T w + w^T C_nop w
+          var_num <- as.numeric(s_jj - 2 * crossprod(s_j_minusj, w_j) + crossprod(w_j, C_nop %*% w_j))
+          var_alpha_j <- (var_num / (den_j^2)) * sigma_e2_hat
+          # numerical safety
+          if (var_alpha_j < 0) var_alpha_j <- max(var_alpha_j, 1e-12)
+          se_hat_vec[j] <- sqrt(var_alpha_j)
+        
+        } # end for j
+        
+        results_list[[iib]] <- list(
+          alpha_hat = alpha_hat_vec,
+          se_hat    = se_hat_vec
+        )
+        
+        list_Allbatch= list(
+          Nb=Nb,
+          S_D = S_D,         # p x p
+          S_DY =  S_DY,    # p x 1
+          S_Y =  S_Y
+        )
+        
+      }
+    }
+  }
+  resultName <- paste0("~/ridge_fdr_1000/simu-",i,"-.rds")
+  saveRDS(results_list, file = resultName)
+  i=i+1
+}
