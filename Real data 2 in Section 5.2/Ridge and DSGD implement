@@ -214,6 +214,90 @@ batches <- df %>% group_by(timeunit) %>% group_split()
   
 }
 
+
+######## prediction ############
+file_path <- paste0("~/real_data/ridge_1.rds")
+## 选取变量
+data <- readRDS(file_path)
+reject_list=list()
+for (iib in 1:208) {
+  alpha_p=data[[iib]]$alpha_hat
+  se_p=data[[iib]]$se_hat
+  T=alpha_p/se_p
+  pval_vec <- 2 * (1 - pnorm(abs(T)))
+  o_bh <- order(pval_vec, decreasing = FALSE)
+  p_sorted <- pval_vec[o_bh]
+  k_vec <- seq_len(279)
+  thresh <- (k_vec / 279) * 0.1
+  compare <- p_sorted <= thresh
+  if (any(compare)) {
+    k_star <- max(which(compare))
+    reject_idx_sorted <- o_bh[seq_len(k_star)]
+  } else {
+    k_star <- 0
+    reject_idx_sorted <- integer(0)
+  }
+  R_vec <- integer(280)
+  if (k_star > 0) R_vec[reject_idx_sorted] <- 1
+  reject_list[[iib]]=R_vec
+}
+sapply(reject_list, sum)
+
+library(ncvreg)
+### MCP##
+#### 划分训练集和测试集 ridge method
+results_list <-list()
+for (iii in 1:50) {
+  df1=df[order(df$timeunit), ]
+  df1[-1]=scale(df[-1])
+  split_data <- df1 %>%
+    group_by(timeunit) %>%
+    mutate(is_test = runif(n()) < 0.3) %>%  # 每天随机 30%
+    ungroup()
+  
+  train_set <- split_data %>% filter(!is_test)
+  test_set  <- split_data %>% filter(is_test)
+  # 累积样本数
+  batch_sizes_new <- table(train_set$timeunit)
+  cum_sizes_new <- cumsum(batch_sizes_new)
+  batch_sizes_test <- table(test_set$timeunit)
+  cum_sizes_test <- cumsum(batch_sizes_test)
+  
+  {
+    r2_selected=as.numeric()
+    for(ib in 1:length(cum_sizes_new)){
+      rej_list=which(reject_list[[ib]]==1)
+      if(length(rej_list)>0){
+        D=train_set[1:as.numeric(cum_sizes_new[ib]),c(rej_list+1)]
+        if(dim(D)[2]==1&&apply(D, 2, sd) == 0){
+          Y_test_new<-test_set$LBL[1:as.numeric(cum_sizes_test[ib])]
+          r2_selected[ib]=sqrt(mean((Y_test_new)^2))
+        }else{
+          Y1=train_set$LBL[1:as.numeric(cum_sizes_new[ib])]
+          fit <- ncvreg(D, Y1, family="gaussian", penalty="MCP")
+          cvfit <- cv.ncvreg(D, Y1, family="gaussian", penalty="MCP")
+          best_lambda <- cvfit$lambda.min
+          idx <- which.min(abs(fit$lambda - best_lambda))
+          beta_hat <- fit$beta[, idx]
+          X_test_new<-test_set[1:as.numeric(cum_sizes_test[ib]),c(rej_list+1)]
+          X_test_new=as.matrix(X_test_new)
+          Y_test_new<-test_set$LBL[1:as.numeric(cum_sizes_test[ib])]
+          y_pred <- beta_hat[1] + X_test_new %*% beta_hat[-1]
+          r2_selected[ib]=sqrt(mean((Y_test_new - y_pred)^2))
+        }
+      }else{
+        Y_test_new<-test_set$LBL[1:as.numeric(cum_sizes_test[ib])]
+        r2_selected[ib]=sqrt(mean((Y_test_new)^2))
+      }
+      
+    }
+  }
+  results_list[[iii]]=r2_selected
+  resultName <- paste0("~/R/ridge/real_data/pro_pred_selected_1.rds")
+  saveRDS(results_list, file = resultName)
+}
+
+
 ######################################################
 #################### DSGD method ####################
 ######################################################
@@ -331,3 +415,84 @@ NB=B
   resultName <- paste0("~/real_data/dsgd_1.rds")
   saveRDS(results_list, file = resultName)
 }
+
+############ prediction ################
+
+file_path <- paste0("~/R/ridge/real_data/dsgd_1.rds")
+## 选取变量
+data <- readRDS(file_path)
+reject_list=list()
+for (iib in 1:208) {
+  alpha_p=data$alpha_hat[,iib]
+  se_p=data$se_hat[,iib]
+  T=alpha_p/se_p
+  pval_vec <- 2 * (1 - pnorm(abs(T)))
+  o_bh <- order(pval_vec, decreasing = FALSE)
+  p_sorted <- pval_vec[o_bh]
+  k_vec <- seq_len(279)
+  thresh <- (k_vec / 279) * 0.1
+  compare <- p_sorted <= thresh
+  if (any(compare)) {
+    k_star <- max(which(compare))
+    reject_idx_sorted <- o_bh[seq_len(k_star)]
+  } else {
+    k_star <- 0
+    reject_idx_sorted <- integer(0)
+  }
+  R_vec <- integer(280)
+  if (k_star > 0) R_vec[reject_idx_sorted] <- 1
+  reject_list[[iib]]=R_vec
+}
+sapply(reject_list, sum)
+
+results_list <-list()
+for (iii in 1:5) {
+  df1=df[order(df$timeunit), ]
+  df1[-1]=scale(df[-1])
+  split_data <- df1 %>%
+    group_by(timeunit) %>%
+    mutate(is_test = runif(n()) < 0.3) %>%  # 每天随机 30%
+    ungroup()
+  
+  train_set <- split_data %>% filter(!is_test)
+  test_set  <- split_data %>% filter(is_test)
+  # 累积样本数
+  batch_sizes_new <- table(train_set$timeunit)
+  cum_sizes_new <- cumsum(batch_sizes_new)
+  batch_sizes_test <- table(test_set$timeunit)
+  cum_sizes_test <- cumsum(batch_sizes_test)
+  
+  {
+    r2_selected=as.numeric()
+    for(ib in 1:length(cum_sizes_new)){
+      rej_list=which(reject_list[[ib]]==1)
+      if(length(rej_list)>0){
+        D=train_set[1:as.numeric(cum_sizes_new[ib]),c(rej_list+1)]
+        if(dim(D)[2]==1&&apply(D, 2, sd) == 0){
+          Y_test_new<-test_set$LBL[1:as.numeric(cum_sizes_test[ib])]
+          r2_selected[ib]=sqrt(mean((Y_test_new)^2))
+        }else{
+          Y1=train_set$LBL[1:as.numeric(cum_sizes_new[ib])]
+          fit <- ncvreg(D, Y1, family="gaussian", penalty="MCP")
+          cvfit <- cv.ncvreg(D, Y1, family="gaussian", penalty="MCP")
+          best_lambda <- cvfit$lambda.min
+          idx <- which.min(abs(fit$lambda - best_lambda))
+          beta_hat <- fit$beta[, idx]
+          X_test_new<-test_set[1:as.numeric(cum_sizes_test[ib]),c(rej_list+1)]
+          X_test_new=as.matrix(X_test_new)
+          Y_test_new<-test_set$LBL[1:as.numeric(cum_sizes_test[ib])]
+          y_pred <- beta_hat[1] + X_test_new %*% beta_hat[-1]
+          r2_selected[ib]=sqrt(mean((Y_test_new - y_pred)^2))
+        }
+      }else{
+        Y_test_new<-test_set$LBL[1:as.numeric(cum_sizes_test[ib])]
+        r2_selected[ib]=sqrt(mean((Y_test_new)^2))
+      }
+      
+    }
+  }
+  results_list[[iii]]=r2_selected
+  resultName <- paste0("~/R/ridge/real_data/dsgd_pred_selected_1.rds")
+  saveRDS(results_list, file = resultName)
+}
+
