@@ -5,17 +5,17 @@ library(MASS)
 library(Rcpp)
 library(Matrix)
 
-source("/home/sychen/R/OnlineDSGD-main/datagenerator.R")
-source("/home/sychen/R/OnlineDSGD-main/eval_func.R")
+source("~/datagenerator.R")
+source("~/eval_func.R")
 
-source("/home/sychen/R/OnlineDSGD-main/online_LASSO_ASGD.R")
-sourceCpp("/home/sychen/R/OnlineDSGD-main/online_Lasso_ASGD.cpp")
+source("~/online_LASSO_ASGD.R")
+sourceCpp("~/online_Lasso_ASGD.cpp")
 
-source("/home/sychen/R/OnlineDSGD-main/online_LASSO_RADAR.R")
-sourceCpp("/home/sychen/R/OnlineDSGD-main/online_Lasso_RADAR.cpp")
+source("~/online_LASSO_RADAR.R")
+sourceCpp("~/online_Lasso_RADAR.cpp")
 
-source("/home/sychen/R/OnlineDSGD-main/offline_LASSO_RADAR.R")
-sourceCpp("/home/sychen/R/OnlineDSGD-main/offline_LASSO_RADAR.cpp")
+source("~/offline_LASSO_RADAR.R")
+sourceCpp("~/offline_LASSO_RADAR.cpp")
 
 ### store data
 store_data<-function(data1,tempdatadir){
@@ -201,8 +201,8 @@ n=1
     result37ll[i,4]=mean(result37l[idx,4])
   }
   
-  file.create("~/fig_dsgd_p1000one_c.txt")
-  sink("~/fig_dsgd_p1000one_c.txt",append=TRUE)
+  file.create("~/fig_dsgd_p1000one.txt")
+  sink("~/fig_dsgd_p1000one.txt",append=TRUE)
   print(result37ll)
   sink()
   result37ll
@@ -305,8 +305,8 @@ n=1
     result37ll[i,4]=mean(result37l[idx,4])
   }
   
-  file.create("~/fig_dsgd_p1000one_c.txt")
-  sink("~/fig_dsgd_p1000one_c.txt",append=TRUE)
+  file.create("~/fig_dsgd_p1000one_noc.txt")
+  sink("~/fig_dsgd_p1000one_noc.txt",append=TRUE)
   print(result37ll)
   sink()
   result37ll
