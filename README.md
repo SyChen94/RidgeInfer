@@ -6,8 +6,10 @@ R code for “Online Inference under Over-parameterized Models with Hidden Confo
 ## Structure
 - Simulation XX in Section XX: code for simulation results
   - xxx.R
-  - Figure XX.
+  - Figure XX.R : code for figure
 - Real data XX in Section XX: Code of real data
+  - xxx.R
+  - Figure XX.R : code for figure
 
 ## Note
 This repository contains the code for the experiments reported in the main paper. Due to the large volume of additional simulations and real data analyses in the supplementary materials, their corresponding code is not included here but is available from the authors upon request.
