@@ -1,0 +1,315 @@
+################# DSGD method ########################
+######################################################
+library(hdi)
+library(MASS)
+library(Rcpp)
+library(Matrix)
+
+source("/home/sychen/R/OnlineDSGD-main/datagenerator.R")
+source("/home/sychen/R/OnlineDSGD-main/eval_func.R")
+
+source("/home/sychen/R/OnlineDSGD-main/online_LASSO_ASGD.R")
+sourceCpp("/home/sychen/R/OnlineDSGD-main/online_Lasso_ASGD.cpp")
+
+source("/home/sychen/R/OnlineDSGD-main/online_LASSO_RADAR.R")
+sourceCpp("/home/sychen/R/OnlineDSGD-main/online_Lasso_RADAR.cpp")
+
+source("/home/sychen/R/OnlineDSGD-main/offline_LASSO_RADAR.R")
+sourceCpp("/home/sychen/R/OnlineDSGD-main/offline_LASSO_RADAR.cpp")
+
+### store data
+store_data<-function(data1,tempdatadir){
+  dir.create(tempdatadir)
+  for (b in 1:B) {
+    data <- list(y = data1$Y[(n*b-n+1):(n*b)], X = matrix(data1$X[(n*b-n+1):(n*b),],nrow=n))
+    save(data,file=paste(tempdatadir, "/", b, ".RData", sep = ""))
+  }
+}
+############################# confounded model ###################################
+## with confounders one point
+NB=500
+nsim <- 1000
+B <- 500
+p <- 1000
+n=1
+## may be useful
+{
+  C <- 1 # partition big X into C columns (fast generating X)
+  
+  
+  out_index <- (1:20)*25
+  
+  
+  S <- length(out_index)
+  # For RADAR algorithm
+  T_list <- c(0, ceiling(2^c(0:10) * log(p) *(B/NB)))*3
+  
+  
+  k <- 6
+  R <- k / 2
+  
+  # k <- 40#6
+  # R <- 10#k / 2
+  
+  true <- sample(1 : p, size = k, replace = FALSE)
+  beta0 <- rep(0, p)
+  
+  beta01 <- 1
+  beta02 <- 0.01
+  
+  true_beta <- rep(c(1, 0.01), each = k / 2)
+  
+  beta0[true] <- true_beta
+  
+  phi <- 1
+  
+  # corst_x <- "ind"
+  corst_x <- "AR-1"
+  rho_x <- 0.5
+  
+  family <- "gaussian"
+  
+  # three sets based on signal strength
+  A1 <- which(beta0 == 0)
+  A2 <- which(beta0 == 0.01)
+  A3 <- which(beta0 == 1)
+  
+  subset_index <- c(1 : p) #c(A1, A2, A3)
+  # beta0_sub <- beta0[subset_index]
+  
+  intercept <- FALSE
+  
+  nb <- round(NB / B)
+  
+  # tuning parameters
+  eta1 <- 0.0025 #0.0025 #0.005  # tuning parameter for ASGD
+  eta2 <- 0.0025 # tuning parameter for RADAR
+  lambda_seq <- seq(0.30, 0.45, 0.05)
+  
+  dir.create(paste(p))
+  dir.create('/home/sychen/R/data1')
+  
+  outputfilename <- paste(family, "_", "N", NB, "B", B, "p", p, "s0", k, corst_x, eta1, eta2, sep = "")
+  
+  outputfilename_store <- paste(p, "/", family, "_", "N", NB, "B", B, "p", p, "s0", k, corst_x, eta1, eta2, sep = "")
+  
+  RADAR_on <- TRUE
+  ASGD_on <- TRUE
+  
+  RADAR_off <-  TRUE
+  hdi <- TRUE
+  lambda_c <- 3
+  
+}
+## run
+{
+  result37l=matrix(0,nsim*nBatch,4)
+  for(s in c(1 : nsim)){
+    print(s)
+    # generate data
+    {
+      {
+        N = n* B
+        P_control = p
+        
+        lam=0.1
+        
+        sig_level<- 0.05
+        the_rhop = 0.5
+        P_hidden <- 3
+        error_sigma <- 5
+        
+        beta_setting <- list(
+          c("Nonsparse", 0.5, sqrt(0.1 / (P_control*0.5)), 1) # (type,ratioOfNonzero,coeff_of_control,coeff_of_interest)
+        )[[1]]
+        beta_type <- beta_setting[1]
+        beta_ratio = as.numeric(beta_setting[2])
+        beta_coeff <- as.numeric(beta_setting[3])
+        
+        if (beta_type == "Nonsparse") {
+          num_nonzero <- floor(P_control * as.numeric(beta_ratio))
+          num_zero <- P_control - num_nonzero
+          
+          beta <- c(rep(beta_coeff, num_nonzero), rep(0, num_zero))
+        }
+        signal_strength <- as.numeric(beta_setting[4])
+        beta[1] <- signal_strength
+        
+        one_over_sqrtp <- round(1 / sqrt(P_control), 2)
+        
+        Sigma_type <- "CONS"
+        Sigma_rho <- 0.3
+        #############################
+        
+        #####################################################################################
+        # generate Sigma and E
+        if (Sigma_type == "CONS") {
+          SigmaX <- matrix(Sigma_rho, P_control, P_control)
+          diag(SigmaX) <- rep(1, P_control)
+          
+          E <- mnormt::rmnorm(N, mean = rep(0, P_control), varcov = SigmaX)
+        }
+        
+        #### generate hiddens
+        H <- 1 * matrix(rnorm(N * P_hidden, mean = 0, sd = 1), N, P_hidden, byrow = TRUE)
+        Gamma <- matrix(rnorm(P_hidden * P_control, mean = 0, sd = 1), P_hidden, P_control, byrow = TRUE)/(P_hidden)
+        # Gamma = matrix(0,,P_hidden,P_control)
+        X <- E + H %*% Gamma
+        delta <- matrix(rnorm(P_hidden * 1, mean = 0, sd = 1), P_hidden, 1, byrow = TRUE) /sqrt(P_hidden)
+        epsilon <- matrix(rnorm(N * 1, mean = 0, sd = 1), N, 1, byrow = TRUE)*sqrt(error_sigma)
+        if(1){
+          SNR = 1
+          #bet <- c(rnorm(20,0,1), rep(0, P_control-20))
+          bet <- c(rnorm(num_nonzero,0,1), rep(0, num_zero))
+          bet[1]=signal_strength
+          c=(SNR*error_sigma-signal_strength^2*cov(X)[1,1])/(t(bet[-1])%*%cov(X)[-1,-1]%*%bet[-1])
+          bet[-1]=bet[-1]*sqrt(c)[1,1]
+          beta = bet
+        }
+        Y <- X %*% beta +  1*H %*% delta + epsilon
+        
+        data1 <- list(Y = Y, X = X)
+      }
+      tempdatadir <- paste('/home/sychen/R/data1', "/", "Temp_", outputfilename, "_", s, sep = "")
+      store_data(data1,tempdatadir)
+    }
+    ASGD_on == TRUE
+    ## run ASGD
+    {
+      if(ASGD_on == TRUE){
+        result.B.lasso.ASGD <- online_LASSO_full_ASGD(B = B, subset_index = subset_index, tempdatadir = tempdatadir, 
+                                                      p = p, original_eta = eta1, lambda_seq = lambda_seq, 
+                                                      intercept = intercept, out_index = out_index)
+        print("online lasso ASGD: done!")}
+      est <- result.B.lasso.ASGD$beta_de_mat[1,]
+      sd <- result.B.lasso.ASGD$sd_de_mat[1,]
+      quantile_alpha = qnorm(1-0.05/2,mean=0,sd = 1,lower.tail=TRUE)
+      upper=est + quantile_alpha * (sd)
+      lower=est - quantile_alpha * (sd)
+      cp=(signal_strength>=lower)*(signal_strength<=upper)
+      result37l[(nBatch*(s-1)+1):(nBatch*s),]= cbind(est,upper,lower,cp)
+    }
+    unlink(tempdatadir,recursive = TRUE)
+  }
+  
+  result37ll=matrix(0,nBatch,4)
+  for (i in 1:nBatch) {
+    idx=(1:nsim-1)*nBatch+i
+    result37ll[i,1]=mean(result37l[idx,1])
+    result37ll[i,2]=mean(abs(result37l[idx,2]))
+    result37ll[i,3]=mean(result37l[idx,3])
+    result37ll[i,4]=mean(result37l[idx,4])
+  }
+  
+  file.create("~/fig_dsgd_p1000one_c.txt")
+  sink("~/fig_dsgd_p1000one_c.txt",append=TRUE)
+  print(result37ll)
+  sink()
+  result37ll
+  
+}
+
+#############################  classical model ###################################
+## with confounders one point
+NB=500
+nsim <- 1000
+B <- 500
+p <- 1000
+n=1
+## run
+{
+  result37l=matrix(0,nsim*nBatch,4)
+  for(s in c(1 : nsim)){
+    print(s)
+    # generate data
+    {
+      {
+        N = n* B
+        P_control = p
+        
+        lam=0.1
+        
+        sig_level<- 0.05
+        the_rhop = 0.5
+        P_hidden <- 3
+        error_sigma <- 5
+        
+        beta_setting <- list(
+          c("sparse", 20, sqrt(0.1 / (P_control*0.5)), 1) # (type,ratioOfNonzero,coeff_of_control,coeff_of_interest)
+        )[[1]]
+        beta_type <- beta_setting[1]
+        beta_ratio = as.numeric(beta_setting[2])
+        beta_coeff <- as.numeric(beta_setting[3])
+        
+        signal_strength <- as.numeric(beta_setting[4])
+        beta[1] <- signal_strength
+        
+        one_over_sqrtp <- round(1 / sqrt(P_control), 2)
+        
+        Sigma_type <- "CONS"
+        Sigma_rho <- 0.3
+        #############################
+        
+        #####################################################################################
+        # generate Sigma and E
+        if (Sigma_type == "CONS") {
+          SigmaX <- matrix(Sigma_rho, P_control, P_control)
+          diag(SigmaX) <- rep(1, P_control)
+          
+          E <- mnormt::rmnorm(N, mean = rep(0, P_control), varcov = SigmaX)
+        }
+        
+        
+        X <- E 
+        epsilon <- matrix(rnorm(N * 1, mean = 0, sd = 1), N, 1, byrow = TRUE)*sqrt(error_sigma)
+        if(1){
+          SNR = 1
+          bet <- c(rnorm(20,0,1), rep(0, P_control-20))
+          bet[1]=signal_strength
+          c=(SNR*error_sigma-signal_strength^2*cov(X)[1,1])/(t(bet[-1])%*%cov(X)[-1,-1]%*%bet[-1])
+          bet[-1]=bet[-1]*sqrt(c)[1,1]
+          beta = bet
+        }
+        Y <- X %*% beta + epsilon
+        
+        data1 <- list(Y = Y, X = X)
+      }
+      tempdatadir <- paste('/home/sychen/R/data1', "/", "Temp_", outputfilename, "_", s, sep = "")
+      store_data(data1,tempdatadir)
+    }
+    ASGD_on == TRUE
+    ## run ASGD
+    {
+      if(ASGD_on == TRUE){
+        result.B.lasso.ASGD <- online_LASSO_full_ASGD(B = B, subset_index = subset_index, tempdatadir = tempdatadir, 
+                                                      p = p, original_eta = eta1, lambda_seq = lambda_seq, 
+                                                      intercept = intercept, out_index = out_index)
+        print("online lasso ASGD: done!")}
+      est <- result.B.lasso.ASGD$beta_de_mat[1,]
+      sd <- result.B.lasso.ASGD$sd_de_mat[1,]
+      quantile_alpha = qnorm(1-0.05/2,mean=0,sd = 1,lower.tail=TRUE)
+      upper=est + quantile_alpha * (sd)
+      lower=est - quantile_alpha * (sd)
+      cp=(signal_strength>=lower)*(signal_strength<=upper)
+      result37l[(nBatch*(s-1)+1):(nBatch*s),]= cbind(est,upper,lower,cp)
+    }
+    unlink(tempdatadir,recursive = TRUE)
+  }
+  
+  result37ll=matrix(0,nBatch,4)
+  for (i in 1:nBatch) {
+    idx=(1:nsim-1)*nBatch+i
+    result37ll[i,1]=mean(result37l[idx,1])
+    result37ll[i,2]=mean(abs(result37l[idx,2]))
+    result37ll[i,3]=mean(result37l[idx,3])
+    result37ll[i,4]=mean(result37l[idx,4])
+  }
+  
+  file.create("~/fig_dsgd_p1000one_c.txt")
+  sink("~/fig_dsgd_p1000one_c.txt",append=TRUE)
+  print(result37ll)
+  sink()
+  result37ll
+  
+}
+
