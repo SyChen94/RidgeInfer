@@ -1,0 +1,468 @@
+library(openxlsx)
+library(lava)
+library(glmnet)
+library(MASS)
+library(mnormt)
+library(FarmSelect)
+source("R/ridge/Funs_proposed.R")
+source("R/ridge/Funs_DDL_all.R")
+source("R/ridge/Funs_data.R")
+
+#### main text ###########
+######### Ridge ############
+library(openxlsx)
+file2=read.xlsx("~/R/online_lasso/real_data/std_stock.xlsx")
+gg=1
+simu_n = 3
+nBatch=300
+sig_level=0.05
+
+## three of interest
+finan_alpha=c(1,2,3)
+result=matrix(0,nBatch*simu_n,7)
+for(i in 1:simu_n){
+  b = 1
+  nBatch=300
+  N = b* nBatch
+  P_control = dim(file2)[2]-1
+  data <- list(Y = file2[,gg], X = file2[,-gg])
+  Y <- data$Y
+  X <- data$X
+  Y11 <- data$Y
+  X11 <- as.matrix(data$X,nrow=N)
+  index = 1
+  Ind_begin = seq(1,N,b)
+  Data_inBatch = list()
+  for(ib in 1:nBatch){
+    b_begin = Ind_begin[ib]
+    b_end = Ind_begin[ib]+b-1
+    print(c(b_begin,b_end))
+    b_index = b_begin:b_end
+    Yb = Y[b_index]
+    Xb = X[b_index,]
+    Data_inBatch[[ib]] = list(Yb=Yb,Xb=Xb)
+  }
+  length(Data_inBatch)
+  length(Data_inBatch[[1]]$Yb)
+  
+  #print(c("The batch sequence",1:nBatch))
+  inx = finan_alpha[i]
+  
+  #We need the following quantities saved 
+  list_Allbatch = list()
+  #####################################################
+  if(1){
+    ib = 1
+    data_ib = Data_inBatch[[ib]]
+    D = matrix(data_ib$Xb,ncol=P_control)
+    Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+    for(ib in 2:12){
+      data_ib = Data_inBatch[[ib]]
+      D=rbind(D,data_ib$Xb)
+      Y=rbind(Y,data_ib$Yb)
+    }
+    Z = as.matrix(D[,inx],length(D[,inx]),1)
+    X = matrix(D[,-inx],ncol=P_control-1)
+    b = nrow(X)
+    Nb = 0 + b
+    
+    X1 = X
+    Z1 = Z
+    Y1 = Y
+    D1 = D
+    
+    ##quantities need to save    
+    ZtZ = t(Z)%*%Z
+    ZtY = t(Z)%*%Y
+    ZtX = t(Z)%*%X
+    XtY = t(X)%*%Y
+    XtX = t(X)%*%X
+    YtY = t(Y)%*%Y
+    DtY = t(D)%*%Y
+    DtD = t(D)%*%D
+    #eta = 10*max(abs(cov(Y,D)))/(ncol(D))
+    dim(ZtX)
+    dim(XtY)
+    if(1){
+      #Sn^{-1}
+      X2_re  = chol2inv(chol(X %*% t(X) + eta * diag(nrow(X)))) 
+      Sn_inv= 1 / eta * (diag(ncol(X)) - t(X) %*% X2_re %*%X )
+    }
+    # Sn_inv= solve(XtX + eta*diag(ncol(X)))
+    #Sn_inv= solve(XtX + eta*diag(ncol(X)))
+    if(1){
+      #Sn^{-1}
+      X2_re  = chol2inv(chol(D %*% t(D) + eta * diag(nrow(D)))) 
+      SnD_inv= 1 / eta * (diag(ncol(D)) - t(D) %*% X2_re %*%D)
+    }
+    
+    
+    The_numeritor = ZtY - ZtX%*%Sn_inv%*%XtY
+    The_donominator = ZtZ - ZtX%*%Sn_inv%*%t(ZtX)
+    the_est = The_numeritor/The_donominator
+    the_est
+    
+    
+    dg=(diag(nrow(X))-(X)%*%Sn_inv%*%t(X))
+    Sigma_numeritor =t(Z)%*%dg%*%dg%*%Z
+    #Sigma_numeritor = ZtZ - 2* ZtX%*%Sn_inv%*%t(ZtX) + ZtX%*%Sn_inv%*%XtX%*%Sn_inv%*%t(ZtX)
+    #Sigma_numeritor = ZtZ + ZtX%*%Sn_inv%*%(XtX%*%Sn_inv-2*diag(nrow(XtX)))%*%t(ZtX)
+    Sigma_denominator =The_donominator^2
+    
+    the_sigmacheck = (YtY - t(DtY)%*%SnD_inv%*%DtY) /Nb
+    trAn  =  tr(SnD_inv%*%DtD)
+    
+    the_sigma = (1-Nb^{-1}*trAn)^{-1}*the_sigmacheck
+    
+    the_sigma_beta = Sigma_numeritor/Sigma_denominator*the_sigma
+    #print(c("ib",ib,"est",the_est,"sigma",the_sigma_beta))
+    
+    quantile_alpha = qnorm(1-sig_level/2,mean=0,sd = 1,lower.tail=TRUE)
+    upper_bound = the_est + quantile_alpha * (the_sigma_beta)^0.5
+    lower_bound = the_est - quantile_alpha * (the_sigma_beta)^0.5
+    p_value = 1 - pchisq(((the_est)/(the_sigma_beta)^0.5 )^2,df=1)
+    CI = c(lower_bound,upper_bound)
+    #print(CI)
+    list_Allbatch= list(
+      the_sigma_beta= the_sigma_beta,
+      the_sigma= the_sigma,
+      the_est = the_est,
+      p_value= p_value,
+      CI = CI,
+      ##########
+      ZtZ = ZtZ,
+      ZtY = ZtY,
+      ZtX = ZtX,
+      XtY = XtY,
+      YtY = YtY,
+      XtX = XtX,
+      Sn_inv = Sn_inv,
+      eta = eta,
+      DtY = DtY,
+      DtD = DtD,
+      SnD_inv = SnD_inv,
+      b = b,###the sample size of current data batch
+      Nb = 0 + b ###cumulative sample size
+    )
+  }
+  result[(i-1)*nBatch+ib,1]=list_Allbatch$the_est
+  result[(i-1)*nBatch+ib,2]=list_Allbatch$the_est
+  result[(i-1)*nBatch+ib,3]=sqrt(list_Allbatch$the_sigma_beta)
+  result[(i-1)*nBatch+ib,4]=list_Allbatch$CI[1]
+  result[(i-1)*nBatch+ib,5]=list_Allbatch$CI[2]
+  result[(i-1)*nBatch+ib,6]=list_Allbatch$p_value
+  result[(i-1)*nBatch+ib,7]=list_Allbatch$the_sigma
+  
+  ######From ib = 2, we have to update the qunatities
+  ib = 13
+  for(ib in 13:nBatch){
+    #print(c('ib',ib))
+    LastRound = list_Allbatch
+    
+    the_sigma_n = LastRound$the_sigma
+    the_est_n = LastRound$the_est
+    eta_n = LastRound$eta
+    
+    
+    ZtZ_n = LastRound$ZtZ
+    ZtY_n = LastRound$ZtY
+    ZtX_n = LastRound$ZtX
+    XtY_n = LastRound$XtY
+    XtX_n = LastRound$XtX
+    YtY_n = LastRound$YtY
+    Sn_inv_n = LastRound$Sn_inv
+    DtY_n = LastRound$DtY
+    DtD_n = LastRound$DtD
+    SnD_inv_n = LastRound$SnD_inv
+    Nb_n = LastRound$Nb ###cumulative sample size
+    
+    ########
+    #D_b = X11[1:(ib*b),]
+    #Y_b = matrix(Y11[1:(ib*b),])
+    #eta = lam*max(abs(t(Y_b)%*%D_b))/(nrow(D_b)*ncol(D_b))
+    #eta = lam*max(abs(t(Y_b)%*%D_b))/(ncol(D_b))
+    #eta = max(abs(cov(Y,D)))/(ncol(D))
+    ###
+    
+    #update rule of inner product of vector. for all but Sn_inv and SnD_inv_n
+    
+    #Now data 
+    data_ib = Data_inBatch[[ib]]
+    D = matrix(data_ib$Xb,ncol=P_control)
+    Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+    Z = as.matrix(D[,inx],length(D[,inx]),1)
+    #X = matrix(D[,2:ncol(D)],ncol=P_control-1)
+    X = matrix(D[,-inx],ncol=P_control-1)
+    b = nrow(X)
+    Nb = b + Nb_n
+    ZtZ = ZtZ_n + t(Z)%*%Z
+    ZtY = ZtY_n + t(Z)%*%Y
+    ZtX = ZtX_n + t(Z)%*%X
+    XtY = XtY_n + t(X)%*%Y
+    YtY = YtY_n + t(Y)%*%Y
+    XtX = XtX_n + t(X)%*%X
+    DtY = DtY_n + t(D)%*%Y
+    DtD = DtD_n + t(D)%*%D
+    
+    # Sn_inv_n  to Sn_inv_n
+    
+    #with  Woodbury_Matrix_Identity
+    dim(diag(nrow(X))+ X%*%Sn_inv_n%*%t(X))
+    # tr(X%*%Sn_inv_n%*%t(X))
+    # sum(abs(solve( diag(nrow(X))+ X%*%Sn_inv_n%*%t(X) )%*%( diag(nrow(X))+ X%*%Sn_inv_n%*%t(X) ) - diag(nrow(X))))
+    Sn_inv = Sn_inv_n - Sn_inv_n%*%t(X)%*%solve( diag(nrow(X))+ X%*%Sn_inv_n%*%t(X))%*%X%*%Sn_inv_n
+    max(abs(Sn_inv - Sn_inv_n))
+    SnD_inv = SnD_inv_n - SnD_inv_n%*%t(D)%*%solve( diag(nrow(D))+ D%*%SnD_inv_n%*%t(D) )%*%D%*%SnD_inv_n
+    ##################################################3
+    The_numeritor = ZtY - ZtX%*%Sn_inv%*%XtY
+    The_donominator = ZtZ - ZtX%*%Sn_inv%*%t(ZtX)
+    the_est = The_numeritor/The_donominator
+    the_est
+    
+    
+    dg=(diag(Nb)-(X11[1:Nb,-1])%*%Sn_inv%*%t(X11[1:Nb,-1]))
+    #Sigma_numeritor =t(X11[1:Nb,1])%*%dg%*%dg%*%X11[1:Nb,1]
+    Sigma_numeritor = ZtZ - 2* ZtX%*%Sn_inv%*%t(ZtX) + ZtX%*%Sn_inv%*%XtX%*%Sn_inv%*%t(ZtX)
+    Sigma_denominator =The_donominator^2
+    
+    the_sigmacheck = (YtY - t(DtY)%*%SnD_inv%*%DtY) /Nb
+    trAn  =  tr(SnD_inv%*%DtD)
+    
+    the_sigma = (1-Nb^{-1}*trAn)^{-1}*the_sigmacheck
+    the_sigma_beta = abs(Sigma_numeritor/Sigma_denominator)*the_sigma
+    if(the_sigma_beta<0){the_sigma_beta=list_Allbatch[[ib-1]]$the_sigma_beta}
+    
+    
+    quantile_alpha = qnorm(1-sig_level/2,mean=0,sd = 1,lower.tail=TRUE)
+    upper_bound = the_est + quantile_alpha * (the_sigma_beta)^0.5
+    lower_bound = the_est - quantile_alpha * (the_sigma_beta)^0.5
+    p_value = 1 - pchisq(((the_est)/(the_sigma_beta)^0.5 )^2,df=1)
+    CI = c(lower_bound,upper_bound)
+    print(c("ib",ib,"est",the_est,"sigma",the_sigma_beta))
+    print(c("CI",CI))
+    list_Allbatch = list(
+      the_sigma_beta= the_sigma_beta,
+      the_est = the_est,
+      p_value= p_value,
+      the_sigma= the_sigma,
+      CI = CI,
+      ##########
+      ZtZ = ZtZ,
+      ZtY = ZtY,
+      ZtX = ZtX,
+      XtY = XtY,
+      YtY = YtY,
+      XtX = XtX,
+      Sn_inv = Sn_inv,
+      eta = eta,
+      DtY = DtY,
+      DtD = DtD,
+      SnD_inv = SnD_inv,
+      b = b,###the sample size of current data batch
+      Nb = Nb ###cumulative sample size
+    )
+    result[(i-1)*nBatch+ib,1]=list_Allbatch$the_est
+    result[(i-1)*nBatch+ib,2]=list_Allbatch$the_est
+    result[(i-1)*nBatch+ib,3]=sqrt(list_Allbatch$the_sigma_beta)
+    result[(i-1)*nBatch+ib,4]=list_Allbatch$CI[1]
+    result[(i-1)*nBatch+ib,5]=list_Allbatch$CI[2]
+    result[(i-1)*nBatch+ib,6]=list_Allbatch$p_value
+    result[(i-1)*nBatch+ib,7]=list_Allbatch$the_sigma
+    
+  }
+}
+
+
+## the last row has a problem
+result1=result[(1:75)*12,]
+result1[25,]=result[25*12-1,]
+result1[50,]=result[50*12-1,]
+result1[75,]=result[75*12-1,]
+
+library(xtable)
+file.create("R/online_lasso/finan_ridge_one.txt")
+colnames(result37) =  c("est","bias","sd","CI_lower","CI_upper","p-value","err_sig")
+sink("R/online_lasso/finan_ridge_one.txt",append=TRUE)
+print(result1)
+sink()
+
+######### DSGD ############
+
+library(MASS)
+library(Rcpp)
+library(Matrix)
+library(hdi)
+
+
+source("R/online_lasso/OnlineDSGD-main/datagenerator.R")
+source("R/online_lasso/OnlineDSGD-main/eval_func.R")
+
+source("R/online_lasso/OnlineDSGD-main/online_LASSO_ASGD.R")
+sourceCpp("R/online_lasso/OnlineDSGD-main/online_Lasso_ASGD.cpp")
+
+source("R/online_lasso/OnlineDSGD-main/online_LASSO_RADAR.R")
+sourceCpp("R/online_lasso/OnlineDSGD-main/online_Lasso_RADAR.cpp")
+
+source("R/online_lasso/OnlineDSGD-main/offline_LASSO_RADAR.R")
+sourceCpp("R/online_lasso/OnlineDSGD-main/offline_LASSO_RADAR.cpp")
+
+#number of simulations
+nsim <- 1
+NB <- 300
+B <- 300
+p <- dim(file2)[2]-1
+n=1
+## may be ussfull
+{
+  C <- 1 # partition big X into C columns (fast generating X)
+  
+  
+  out_index <- (1:25)*12
+  
+  
+  S <- length(out_index)
+  # For RADAR algorithm
+  T_list <- c(0, ceiling(2^c(0:10) * log(p) *(B/NB)))*3
+  
+  set.seed(1)
+  k <- 6
+  R <- k / 2
+  
+  # k <- 40#6
+  # R <- 10#k / 2
+  
+  true <- sample(1 : p, size = k, replace = FALSE)
+  beta0 <- rep(0, p)
+  
+  beta01 <- 1
+  beta02 <- 0.01
+  
+  true_beta <- rep(c(1, 0.01), each = k / 2)
+  
+  beta0[true] <- true_beta
+  
+  phi <- 1
+  
+  # corst_x <- "ind"
+  corst_x <- "AR-1"
+  rho_x <- 0.5
+  
+  family <- "gaussian"
+  
+  # three sets based on signal strength
+  A1 <- which(beta0 == 0)
+  A2 <- which(beta0 == 0.01)
+  A3 <- which(beta0 == 1)
+  
+  subset_index <- c(1 : p) #c(A1, A2, A3)
+  # beta0_sub <- beta0[subset_index]
+  
+  intercept <- FALSE
+  
+  nb <- round(NB / B)
+  
+  # tuning parameters
+  eta1 <- 0.0025 #0.0025 #0.005  # tuning parameter for ASGD
+  eta2 <- 0.0025 # tuning parameter for RADAR
+  lambda_seq <- seq(0.30, 0.45, 0.05)
+  
+  dir.create(paste(p))
+  dir.create('R/online_lasso/real_data')
+  
+  outputfilename <- paste(family, "_", "N", NB, "B", B, "p", p, "s0", k, corst_x, eta1, eta2, sep = "")
+  
+  outputfilename_store <- paste(p, "/", family, "_", "N", NB, "B", B, "p", p, "s0", k, corst_x, eta1, eta2, sep = "")
+  
+  RADAR_on <- TRUE
+  ASGD_on <- TRUE
+  
+  RADAR_off <-  TRUE
+  hdi <- TRUE
+  lambda_c <- 3
+  
+}
+s=1
+## save data
+tempdatadir <- paste('R/online_lasso/real_data', "/", "Temp_", outputfilename, "_", s, sep = "")
+datagenerator(nb, p, B, C, tempdatadir, beta0 = beta0, phi = phi, intercept = intercept, 
+              corst_x = corst_x, rho_x = rho_x, categorical = FALSE, seed = s)
+
+gg=1
+{
+  s=1
+  print(s)
+  tempdatadir <- paste('R/online_lasso/real_data', "/", "Temp_", outputfilename, "_", s, sep = "")
+  dir.create(tempdatadir)
+  for (b in 1:B) {
+    data <- list(y = file2[(n*b-n+1):(n*b),gg], X = matrix(file2[(n*b-n+1):(n*b),-gg],ncol=p))
+    save(data,file=paste(tempdatadir, "/", b, ".RData", sep = ""))
+  }
+}
+## run ASGD
+{
+  s=1
+  set.seed(s)
+  if(ASGD_on == TRUE){
+    result.B.lasso.ASGD <- online_LASSO_full_ASGD(B = B, subset_index = subset_index, tempdatadir = tempdatadir, 
+                                                  p = p, original_eta = eta1, lambda_seq = lambda_seq, 
+                                                  intercept = intercept, out_index = out_index)
+    print("online lasso ASGD: done!")}
+  
+  out_ese_ASGD <- result.B.lasso.ASGD$beta_de_mat
+  out_sd_ASGD <- result.B.lasso.ASGD$sd_de_mat
+  est=vec(t(out_ese_ASGD[c(1,2,3),]))
+  sd=vec(t(out_sd_ASGD[c(1,2,3),]))
+  quantile_alpha = qnorm(1-0.05/2,mean=0,sd = 1,lower.tail=TRUE)
+  upper=est + quantile_alpha * (sd)
+  lower=est - quantile_alpha * (sd)
+  result01l= cbind(est,upper,lower,sd)
+}
+
+
+
+library(xtable)
+file.create("R/online_lasso/finan_dsgd_one1.txt")
+#colnames(result37) =  c("est","bias","sd","CI_lower","CI_upper","p-value","err_sig")
+## ridgeinfer using first batch
+sink("R/online_lasso/finan_dsgd_one1.txt",append=TRUE)
+print(result01la1)
+sink()
+
+####### plot figure 5 ##############
+###### # ridgeinfer v.s. dsgd ######
+{
+  nBatch=25
+  result01=read.table("~/R/online_lasso/finan_ridge_one.txt",sep="")
+  result01la=read.table("~/R/online_lasso/finan_dsgd_one.txt",sep="")
+  df <- data.frame(batch_numer=(1:25)*12,Estimation=result01[1:nBatch,1],Upper=result01[1:nBatch,4],Lower=result01[1:nBatch,5],Method=rep("RidgeInfer",nBatch))
+  df1 <- data.frame(batch_numer=(1:25)*12+2,Estimation=result01la[1:nBatch,1],Upper=result01la[1:nBatch,2],Lower=result01la[1:nBatch,3],Method=rep("DSGD",nBatch))
+  df2=rbind(df[1:25,],df1[1:25,])
+  p=ggplot(data = df2, mapping = aes(x = batch_numer, y = Estimation,color=Method,shape=Method),key_glyph="pointangle")+theme_bw() + geom_point(size=1.5)+coord_cartesian(ylim = c(-0.75, 0.75))+geom_hline(yintercept=0,size=0.4,linetype="dashed",color="#000000")
+  p=p+geom_errorbar(aes(ymin = Lower, ymax = Upper,color=Method),width = .2, size =0.5)+labs(x=NULL,y="",title="BP.N")+theme(plot.title=element_text(size=11,face ="bold"))
+  
+  p1=p+scale_color_manual(values = c("#619CFF","#F8766D"))+scale_x_continuous(breaks = (1:25)*12)+theme(axis.text.x = element_text(angle=45,size=10))
+  
+  
+  df <- data.frame(batch_numer=(1:25)*12,Estimation=result01[(nBatch+1):(2*nBatch),1],Upper=result01[(nBatch+1):(2*nBatch),4],Lower=result01[(nBatch+1):(2*nBatch),5],Method=rep("RidgeInfer-Online",nBatch))
+  df1 <- data.frame(batch_numer=(1:25)*12+2,Estimation=result01la[(nBatch+1):(2*nBatch),1],Upper=result01la[(nBatch+1):(2*nBatch),2],Lower=result01la[(nBatch+1):(2*nBatch),3],Method=rep("DSGD",nBatch))
+  df2=rbind(df[1:25,],df1[1:25,])
+  p=ggplot(data = df2, mapping = aes(x = batch_numer, y = Estimation,color=Method,shape=Method),key_glyph="pointangle")+theme_bw() + geom_point(size=1.5)+coord_cartesian(ylim = c(-0.75, 0.75))+geom_hline(yintercept=0,size=0.4,linetype="dashed",color="#000000")
+  #p=p+geom_point(data = df,aes(x = batch_numer, y = Upper,),color="#F8766D",size=1.5)+geom_point(data = df,aes(x = batch_numer, y = Lower),color="#F8766D",size=1.5)
+  p=p+geom_errorbar(aes(ymin = Lower, ymax = Upper,color=Method),width = .2, size =0.5)+labs(x=NULL,y="",title="SWN.N")+theme(plot.title=element_text(size=11,face ="bold"))
+  
+  p2=p+scale_color_manual(values = c("#619CFF","#F8766D"))+scale_x_continuous(breaks = (1:25)*12)+theme(axis.text.x = element_text(angle=45,size=10))
+  
+  
+  df <- data.frame(batch_numer=(1:25)*12,Estimation=result01[(2*nBatch+1):(3*nBatch),1],Upper=result01[(2*nBatch+1):(3*nBatch),4],Lower=result01[(2*nBatch+1):(3*nBatch),5],Method=rep("RidgeInfer-Online",nBatch))
+  df1 <- data.frame(batch_numer=(1:25)*12+2,Estimation=result01la[(2*nBatch+1):(3*nBatch),1],Upper=result01la[(2*nBatch+1):(3*nBatch),2],Lower=result01la[(2*nBatch+1):(3*nBatch),3],Method=rep("DSGD",nBatch))
+  df2=rbind(df[1:25,],df1[1:25,])
+  p=ggplot(data = df2, mapping = aes(x = batch_numer, y = Estimation,color=Method,shape=Method),key_glyph="pointangle")+theme_bw() + geom_point(size=1.5)+coord_cartesian(ylim = c(-0.75, 0.75))+geom_hline(yintercept=0,size=0.4,linetype="dashed",color="#000000")
+  #p=p+geom_point(data = df,aes(x = batch_numer, y = Upper,),color="#F8766D",size=1.5)+geom_point(data = df,aes(x = batch_numer, y = Lower),color="#F8766D",size=1.5)
+  p=p+geom_errorbar(aes(ymin = Lower, ymax = Upper,color=Method),width = .2, size =0.5)+labs(x="Time (Month)",y="",title="XOM.N")+theme(plot.title=element_text(size=11,face ="bold"))
+  
+  p3=p+scale_color_manual(values = c("#619CFF","#F8766D"))+scale_x_continuous(breaks = (1:25)*12)+theme(axis.text.x = element_text(angle=45,size=10))
+  
+  ggarrange(p1,p2,p3,nrow=3,ncol=1,common.legend = TRUE)
+}
+
+
