@@ -1,0 +1,333 @@
+library(foreign)
+library(dplyr)
+library(data.table)
+library(DoubleML)
+library(mlr3)
+df <- read.arff("~/R/online_lasso/real_data/scm1d.arff")
+batch_sizes <- table(df$timeunit)
+# 累积样本数
+cum_sizes <- cumsum(batch_sizes)
+
+######################################################
+#################### RidgeInfer method ###############
+######################################################
+batches <- df %>% group_by(timeunit) %>% group_split()
+{
+  results_list <- list()
+  #####################################################
+  iib=1
+  D <- batches[[iib]] %>% select(-grep("^MTLp", colnames(df1)), -timeunit)
+  D<-D[,-280]
+  y <- batches[[iib]]$LBL
+  D=as.matrix(D)
+  b = nrow(D)
+  Nb = 0 + b
+  D <- as.matrix(D)
+  Y=as.matrix(y)
+  S_D  <- crossprod(D)         # p x p
+  S_DY <- crossprod(D, Y)    # p x 1
+  S_Y <-  sum(Y^2)
+  eta = 0.1*max(abs(cov(Y,D)))/(ncol(D))
+  A_mat <- S_D+diag(ncol(D))* eta
+  chol_ok <- TRUE
+  Rchol <- tryCatch(chol(A_mat), error = function(e) { chol_ok <<- FALSE; NULL })
+  if (!chol_ok) {
+    # fallback: add small jitter
+    #jitter_eps <- 1e-8 * max(1, diag(A_mat))
+    #diag(A_mat) <- diag(A_mat) + jitter_eps
+    Rchol <- tryCatch(chol(A_mat), error = function(e) stop("Cholesky failed even after jitter"))
+    if (verbose) message(sprintf("Cholesky jitter applied at batch %d", L))
+  }
+  # Inverse via chol2inv
+  M_mat <- chol2inv(Rchol)  # full p x p inverse of A_mat. Equivalent to solve(A_mat).
+  
+  trace_term <- sum(diag(S_D %*% M_mat))
+  denom_df <- 1 - (1/Nb) * trace_term
+  if (denom_df <= 0) {
+    # numerical safeguard: set denom small positive
+    denom_df <- max(denom_df, 1e-8)
+  }
+  sigma_e2_hat <- (1/Nb) * (1/denom_df) * ( S_Y - as.numeric(crossprod(S_DY, M_mat %*% S_DY)) )
+  sigma_e2_hat <- as.numeric((sigma_e2_hat))
+  if (sigma_e2_hat <= 0) sigma_e2_hat <- max(sigma_e2_hat, 1e-8)
+  alpha_hat_vec <- numeric(ncol(D))
+  se_hat_vec    <- numeric(ncol(D))
+  
+  for (j in seq_len(ncol(D))) {
+    # Build indexing
+    idx_all <- seq_len(ncol(D))
+    idx_minusj <- idx_all[-j]
+    
+    # Block entries from S_D and S_DY
+    s_jj    <- as.numeric(S_D[j, j])
+    s_minusj_j <- as.numeric(S_D[idx_minusj, j])    # (p-1) x 1
+    s_j_minusj <- as.numeric(S_D[j, idx_minusj])    # 1 x (p-1)
+    C_nop   <- S_D[idx_minusj, idx_minusj, drop = FALSE] # (p-1)x(p-1)
+    
+    c_j     <- as.numeric(S_DY[j])                   # scalar
+    d_minusj <- as.numeric(S_DY[idx_minusj])        # (p-1)x1
+    
+    # Blocks of M
+    M_jj    <- M_mat[j, j]
+    M_j_minusj <- matrix(M_mat[j, idx_minusj],nrow=1)    # 1 x (p-1)
+    M_minusj_j <- matrix(M_mat[idx_minusj, j],ncol=1)   # (p-1) x 1
+    M_minusj_minusj <- M_mat[idx_minusj, idx_minusj, drop = FALSE]
+    
+    # Omega_j via block identity: Omega = M_{-j,-j} - (1/m11) m12 m12^T
+    Omega_j <- M_minusj_minusj - (1.0 / M_jj) * (M_minusj_j %*% M_j_minusj)
+    # Compute auxiliary vectors u and w:
+    u_j <- Omega_j %*% d_minusj
+    w_j <- Omega_j %*% s_minusj_j
+    
+    # numerator and denominator
+    num_j <- c_j - crossprod(s_j_minusj, u_j)    # scalar
+    den_j <- s_jj - crossprod(s_j_minusj, w_j)   # scalar
+    
+    # handle degenerate den
+    den_j <- as.numeric(den_j)
+    if (abs(den_j) < 1e-12) den_j <- sign(den_j) * 1e-12
+    
+    alpha_hat <- as.numeric(num_j / den_j)
+    alpha_hat_vec[j] <- alpha_hat
+    
+    # variance numerator: s - 2 b^T w + w^T C_nop w
+    var_num <- as.numeric(s_jj - 2 * crossprod(s_j_minusj, w_j) + crossprod(w_j, C_nop %*% w_j))
+    var_alpha_j <- (var_num / (den_j^2)) * sigma_e2_hat
+    # numerical safety
+    if (var_alpha_j < 0) var_alpha_j <- max(var_alpha_j, 1e-12)
+    se_hat_vec[j] <- sqrt(var_alpha_j)
+  } # end for j  
+  
+  results_list[[iib]] <- list(
+    alpha_hat = alpha_hat_vec,
+    se_hat    = se_hat_vec
+  )
+  
+  list_Allbatch= list(
+    Nb=Nb,
+    S_D = S_D,         # p x p
+    S_DY =  S_DY,    # p x 1
+    S_Y =  S_Y
+  )  
+  for(iib in 2:length(batches)){
+    LastRound = list_Allbatch
+    S_D=LastRound$S_D
+    S_DY=LastRound$S_DY
+    S_Y=LastRound$S_Y
+    Nb=LastRound$Nb
+    D <- batches[[iib]] %>% select(-grep("^MTLp", colnames(df1)), -timeunit)
+    D<-D[,-280]
+    y <- batches[[iib]]$LBL
+    b = nrow(D)
+    D <- as.matrix(D)
+    Y=as.matrix(y)
+    b = nrow(D)
+    Nb = b + Nb
+    S_D  <- S_D + crossprod(D)
+    S_DY <- S_DY + crossprod(D, Y)
+    S_Y <- S_Y + sum(Y^2)
+    A_mat <- S_D+diag(ncol(D))* eta
+    chol_ok <- TRUE
+    Rchol <- tryCatch(chol(A_mat), error = function(e) { chol_ok <<- FALSE; NULL })
+    if (!chol_ok) {
+      # fallback: add small jitter
+      jitter_eps <- 1e-8 * max(1, diag(A_mat))
+      diag(A_mat) <- diag(A_mat) + jitter_eps
+      Rchol <- tryCatch(chol(A_mat), error = function(e) stop("Cholesky failed even after jitter"))
+      if (verbose) message(sprintf("Cholesky jitter applied at batch %d", L))
+    }
+    # Inverse via chol2inv
+    M_mat <- chol2inv(Rchol)  # full p x p inverse of A_mat. Equivalent to solve(A_mat).
+    
+    trace_term <- sum(diag(S_D %*% M_mat))
+    denom_df <- 1 - (1/Nb) * trace_term
+    if (denom_df <= 0) {
+      # numerical safeguard: set denom small positive
+      denom_df <- max(denom_df, 1e-8)
+    }
+    sigma_e2_hat <- (1/Nb) * (1/denom_df) * ( S_Y - as.numeric(crossprod(S_DY, M_mat %*% S_DY)) )
+    sigma_e2_hat <- as.numeric((sigma_e2_hat))
+    if (sigma_e2_hat <= 0) sigma_e2_hat <- max(sigma_e2_hat, 1e-8)
+    alpha_hat_vec <- numeric(ncol(D))
+    se_hat_vec    <- numeric(ncol(D))
+    for (j in seq_len(ncol(D))) {
+      # Build indexing
+      idx_all <- seq_len(ncol(D))
+      idx_minusj <- idx_all[-j]
+      
+      # Block entries from S_D and S_DY
+      s_jj    <- as.numeric(S_D[j, j])
+      s_minusj_j <- as.numeric(S_D[idx_minusj, j])    # (p-1) x 1
+      s_j_minusj <- as.numeric(S_D[j, idx_minusj])    # 1 x (p-1)
+      C_nop   <- S_D[idx_minusj, idx_minusj, drop = FALSE] # (p-1)x(p-1)
+      
+      c_j     <- as.numeric(S_DY[j])                   # scalar
+      d_minusj <- as.numeric(S_DY[idx_minusj])        # (p-1)x1
+      
+      # Blocks of M
+      M_jj    <- M_mat[j, j]
+      M_j_minusj <- matrix(M_mat[j, idx_minusj],nrow=1)    # 1 x (p-1)
+      M_minusj_j <- matrix(M_mat[idx_minusj, j],ncol=1)    # (p-1) x 1
+      M_minusj_minusj <- M_mat[idx_minusj, idx_minusj, drop = FALSE]
+      
+      # Omega_j via block identity: Omega = M_{-j,-j} - (1/m11) m12 m12^T
+      Omega_j <- M_minusj_minusj - (1.0 / M_jj) * (M_minusj_j %*% M_j_minusj)
+      # Compute auxiliary vectors u and w:
+      u_j <- Omega_j %*% d_minusj
+      w_j <- Omega_j %*% s_minusj_j
+      
+      # numerator and denominator
+      num_j <- c_j - crossprod(s_j_minusj, u_j)    # scalar
+      den_j <- s_jj - crossprod(s_j_minusj, w_j)   # scalar
+      
+      # handle degenerate den
+      den_j <- as.numeric(den_j)
+      if (abs(den_j) < 1e-12) den_j <- sign(den_j) * 1e-12
+      
+      alpha_hat <- as.numeric(num_j / den_j)
+      alpha_hat_vec[j] <- alpha_hat
+      
+      # variance numerator: s - 2 b^T w + w^T C_nop w
+      var_num <- as.numeric(s_jj - 2 * crossprod(s_j_minusj, w_j) + crossprod(w_j, C_nop %*% w_j))
+      var_alpha_j <- (var_num / (den_j^2)) * sigma_e2_hat
+      # numerical safety
+      if (var_alpha_j < 0) var_alpha_j <- max(var_alpha_j, 1e-12)
+      se_hat_vec[j] <- sqrt(var_alpha_j)
+    } # end for j
+    
+    #print(CI)
+    results_list[[iib]] <- list(
+      alpha_hat = alpha_hat_vec,
+      se_hat    = se_hat_vec
+    )
+    
+    list_Allbatch= list(
+      Nb=Nb,
+      S_D = S_D,         # p x p
+      S_DY =  S_DY,    # p x 1
+      S_Y =  S_Y
+    )
+    
+  }
+  resultName <- paste0("~/real_data/ridge_1.rds")
+  saveRDS(results_list, file = resultName)
+  
+}
+
+######################################################
+#################### DSGD method ####################
+######################################################
+# 按 timeunit 排序整个 df
+df1 <- df[order(df$timeunit), ]
+# 提取 covariates
+XX <- df1[, setdiff(1:ncol(df1), grep("^MTLp", colnames(df1)))]
+XX <- XX[, setdiff(1:ncol(XX), grep("LBL", colnames(XX)))]
+XX=XX[,-1]
+XX=as.matrix(XX)
+XX <- scale(XX)   # 默认是列方向标准化
+Y <- df1$LBL
+#Y=scale(Y)
+
+p=dim(XX)[2]
+B=dim(XX)[1]
+NB=B
+## save data
+{
+  s=1
+  print(s)
+  tempdatadir <- paste('R/online_lasso/real_data', "/", "scm1", sep = "")
+  dir.create(tempdatadir)
+  b=1
+  for (b in 1:B) {
+    data <- list(y = Y[b], X = matrix(XX[b,],ncol=p))
+    save(data,file=paste(tempdatadir, "/", b, ".RData", sep = ""))
+  }
+}
+## maybe useful
+{
+  C <- 1 # partition big X into C columns (fast generating X)
+  
+  
+  out_index <- as.numeric(cumsum(batch_sizes))
+  
+  
+  S <- length(out_index)
+  # For RADAR algorithm
+  T_list <- c(0, ceiling(2^c(0:10) * log(p) *(B/NB)))*3
+  
+  set.seed(1)
+  k <- 6
+  R <- k / 2
+  
+  # k <- 40#6
+  # R <- 10#k / 2
+  
+  true <- sample(1 : p, size = k, replace = FALSE)
+  beta0 <- rep(0, p)
+  
+  beta01 <- 1
+  beta02 <- 0.01
+  
+  true_beta <- rep(c(1, 0.01), each = k / 2)
+  
+  beta0[true] <- true_beta
+  
+  phi <- 1
+  
+  # corst_x <- "ind"
+  corst_x <- "AR-1"
+  rho_x <- 0.5
+  
+  family <- "gaussian"
+  
+  # three sets based on signal strength
+  A1 <- which(beta0 == 0)
+  A2 <- which(beta0 == 0.01)
+  A3 <- which(beta0 == 1)
+  
+  subset_index <- c(1 : p) #c(A1, A2, A3)
+  # beta0_sub <- beta0[subset_index]
+  
+  intercept <- FALSE
+  
+  nb <- round(NB / B)
+  
+  # tuning parameters
+  eta1 <- 0.0025 #0.0025 #0.005  # tuning parameter for ASGD
+  eta2 <- 0.0025 # tuning parameter for RADAR
+  lambda_seq <- seq(0.30, 0.45, 0.05)
+  
+  dir.create(paste(p))
+  dir.create('R/online_lasso/real_data/scm')
+  
+  outputfilename <- paste(family, "_", "N", NB, "B", B, "p", p, "s0", k, corst_x, eta1, eta2, sep = "")
+  
+  outputfilename_store <- paste(p, "/", family, "_", "N", NB, "B", B, "p", p, "s0", k, corst_x, eta1, eta2, sep = "")
+  
+  RADAR_on <- TRUE
+  ASGD_on <- TRUE
+  
+  RADAR_off <-  TRUE
+  hdi <- TRUE
+  lambda_c <- 3
+  
+}
+## run dsgd
+{
+  s=1
+  #set.seed(s)
+  if(ASGD_on == TRUE){
+    result.B.lasso.ASGD <- online_LASSO_full_ASGD(B = B, subset_index = subset_index, tempdatadir = tempdatadir, 
+                                                  p = p, original_eta = eta1, lambda_seq = lambda_seq, 
+                                                  intercept = intercept, out_index = out_index)
+    print("online lasso ASGD: done!")}
+  
+  out_ese_ASGD <- result.B.lasso.ASGD$beta_de_mat
+  out_sd_ASGD <- result.B.lasso.ASGD$sd_de_mat
+  results_list <- list(
+    alpha_hat = (out_ese_ASGD),
+    se_hat    = (out_sd_ASGD)
+  )
+  resultName <- paste0("~/real_data/dsgd_1.rds")
+  saveRDS(results_list, file = resultName)
+}
