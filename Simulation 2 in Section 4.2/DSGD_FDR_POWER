@@ -156,7 +156,7 @@ alpha_bh=0.1
         se_hat    = sd
       )
     }
-    resultName <- paste0("~/R/online_lasso/dsgd_fdr/simu-",s,"-.rds")
+    resultName <- paste0("~/dsgd_fdr/simu-",s,"-.rds")
     saveRDS(results_list, file = resultName)
     unlink(tempdatadir,recursive = TRUE)
   }
