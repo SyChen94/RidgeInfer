@@ -1,0 +1,664 @@
+
+############### RidgeInfer method ######################
+########################################################
+
+############### confounded model ######################
+
+nBatch = 500
+simu_n=1
+result=matrix(0,nBatch*simu_n,7)
+all_result=matrix(0,simu_n,7)
+colnames(all_result) =  c("est","bias","sd","CI_lower","CI_upper","p-value","err_sig")
+for (i in 1:simu_n) {
+  {
+    b = 1
+    N = b* nBatch
+    P_control = 1000
+
+    lam=0.1
+
+    sig_level<- 0.05
+    the_rhop = 0.5
+    P_hidden <- 3
+    error_sigma <- 5
+
+    beta_setting <- list(
+      c("Nonsparse", 0.5, sqrt(0.1 / (P_control*0.5)), 1) # (type,ratioOfNonzero,coeff_of_control,coeff_of_interest)
+    )[[1]]
+    beta_type <- beta_setting[1]
+    beta_ratio = as.numeric(beta_setting[2])
+    beta_coeff <- as.numeric(beta_setting[3])
+
+    if (beta_type == "Nonsparse") {
+      num_nonzero <- floor(P_control * as.numeric(beta_ratio))
+      num_zero <- P_control - num_nonzero
+
+      beta <- c(rep(beta_coeff, num_nonzero), rep(0, num_zero))
+    }
+    signal_strength <- as.numeric(beta_setting[4])
+    beta[1] <- signal_strength
+
+    one_over_sqrtp <- round(1 / sqrt(P_control), 2)
+
+    Sigma_type <- "CONS"
+    Sigma_rho <- 0.3
+    #############################
+
+    #####################################################################################
+    # generate Sigma and E
+    if (Sigma_type == "CONS") {
+      SigmaX <- matrix(Sigma_rho, P_control, P_control)
+      diag(SigmaX) <- rep(1, P_control)
+
+      E <- mnormt::rmnorm(N, mean = rep(0, P_control), varcov = SigmaX)
+    }
+
+
+    #### generate hiddens
+    H <- 1 * matrix(rnorm(N * P_hidden, mean = 0, sd = 1), N, P_hidden, byrow = TRUE)
+    Gamma <- matrix(rnorm(P_hidden * P_control, mean = 0, sd = 1), P_hidden, P_control, byrow = TRUE)/(P_hidden)
+    X <- E + H %*% Gamma
+    delta <- matrix(rnorm(P_hidden * 1, mean = 0, sd = 1), P_hidden, 1, byrow = TRUE) /sqrt(P_hidden)
+    epsilon <- matrix(rnorm(N * 1, mean = 0, sd = 1), N, 1, byrow = TRUE)*sqrt(error_sigma)
+    # eq. (1), the response of the Structural Equation Model
+    if(1){
+      SNR = 1
+      bet <- c(rnorm(num_nonzero,0,1), rep(0, num_zero))
+      bet[1]=signal_strength
+      c=(SNR*error_sigma-signal_strength^2*cov(X)[1,1])/(t(bet[-1])%*%cov(X)[-1,-1]%*%bet[-1])
+      bet[-1]=bet[-1]*sqrt(c)[1,1]
+      beta = bet
+    }
+    Y <- X %*% beta +  1*H %*% delta + epsilon
+    data <- list(Y = Y, X = X)
+
+    Y <- data$Y
+    X <- data$X
+    Y11 <- data$Y
+    X11 <- data$X
+  }
+    Ind_begin = seq(1,N,b)
+    Data_inBatch = list()
+    for(ib in 1:nBatch){
+      b_begin = Ind_begin[ib]
+      b_end = Ind_begin[ib]+b-1
+      print(c(b_begin,b_end))
+      b_index = b_begin:b_end
+      Yb = Y[b_index]
+      Xb = X[b_index,]
+      Data_inBatch[[ib]] = list(Yb=Yb,Xb=Xb)
+    }
+    length(Data_inBatch)
+    length(Data_inBatch[[1]]$Yb)
+
+    #print(c("The batch sequence",1:nBatch))
+    inx = 1
+
+    #We need the following quantities saved
+    list_Allbatch = list()
+    #####################################################
+    t1=Sys.time()
+    if(1){
+      ib = 1
+      data_ib = Data_inBatch[[ib]]
+      D = matrix(data_ib$Xb,ncol=P_control)
+      Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+      for(ib in 2:20){
+        data_ib = Data_inBatch[[ib]]
+        D=rbind(D,data_ib$Xb)
+        Y=rbind(Y,data_ib$Yb)
+      }
+      Z = as.matrix(D[,1],length(D[,1]),1)
+      X = D[,2:ncol(D)]
+      b = nrow(X)
+      Nb = 0 + b
+      X1 = X
+      Z1 = Z
+      Y1 = Y
+      D1 = D
+      # if(0){
+      #     Y = as.matrix(Y,length(Y),1)
+      #       XX=X
+      #     Z = XX[,1]
+      #     X = XX[,2:ncol(XX)]
+      # }
+
+
+      ##quantities need to save
+      ZtZ = t(Z)%*%Z
+      ZtY = t(Z)%*%Y
+      ZtX = t(Z)%*%X
+      XtY = t(X)%*%Y
+      XtX = t(X)%*%X
+      YtY = t(Y)%*%Y
+      DtY = t(D)%*%Y
+      DtD = t(D)%*%D
+      #eta = lam*max(abs(t(Y)%*%D))/(nrow(D)*ncol(D))
+      #eta = lam*max(abs(cov(Y,D)))/(ncol(D))
+      eta = 10*max(abs(cov(Y,D)))/(ncol(D))
+      dim(ZtX)
+      dim(XtY)
+      if(1){
+        #Sn^{-1}
+        X2_re  = chol2inv(chol(X %*% t(X) + eta * diag(nrow(X))))
+        Sn_inv= 1 / eta * (diag(ncol(X)) - t(X) %*% X2_re %*%X )
+      }
+      # Sn_inv= solve(XtX + eta*diag(ncol(X)))
+      #Sn_inv= solve(XtX + eta*diag(ncol(X)))
+      if(1){
+        #Sn^{-1}
+        X2_re  = chol2inv(chol(D %*% t(D) + eta * diag(nrow(D))))
+        SnD_inv= 1 / eta * (diag(ncol(D)) - t(D) %*% X2_re %*%D)
+      }
+
+
+      The_numeritor = ZtY - ZtX%*%Sn_inv%*%XtY
+      The_donominator = ZtZ - ZtX%*%Sn_inv%*%t(ZtX)
+      the_est = The_numeritor/The_donominator
+      the_est
+
+
+      dg=(diag(nrow(X))-(X)%*%Sn_inv%*%t(X))
+      Sigma_numeritor =t(Z)%*%dg%*%dg%*%Z
+      #Sigma_numeritor = ZtZ - 2* ZtX%*%Sn_inv%*%t(ZtX) + ZtX%*%Sn_inv%*%XtX%*%Sn_inv%*%t(ZtX)
+      #Sigma_numeritor = ZtZ + ZtX%*%Sn_inv%*%(XtX%*%Sn_inv-2*diag(nrow(XtX)))%*%t(ZtX)
+      #Sigma_denominator =The_donominator^2
+      Sigma_denominator=ZtZ^2 - 2*ZtZ*ZtX%*%Sn_inv%*%t(ZtX)+ZtX%*%Sn_inv%*%t(ZtX)%*%ZtX%*%Sn_inv%*%t(ZtX)
+
+      the_sigmacheck = (YtY - t(DtY)%*%SnD_inv%*%DtY) /Nb
+      trAn  =  tr(SnD_inv%*%DtD)
+
+      the_sigma = (1-Nb^{-1}*trAn)^{-1}*the_sigmacheck
+
+      the_sigma_beta = Sigma_numeritor/Sigma_denominator*the_sigma
+      #print(c("ib",ib,"est",the_est,"sigma",the_sigma_beta))
+
+      quantile_alpha = qnorm(1-sig_level/2,mean=0,sd = 1,lower.tail=TRUE)
+      upper_bound = the_est + quantile_alpha * (the_sigma_beta)^0.5
+      lower_bound = the_est - quantile_alpha * (the_sigma_beta)^0.5
+      p_value = 1 - pchisq(((the_est-signal_strength)/(the_sigma_beta)^0.5 )^2,df=1)
+      CI = c(lower_bound,upper_bound)
+      cp=(signal_strength>=lower_bound)*(signal_strength<=upper_bound)
+      #print(CI)
+      list_Allbatch= list(
+        the_sigma_beta= the_sigma_beta,
+        the_sigma= the_sigma,
+        the_est = the_est,
+        p_value= p_value,
+        CI = CI,
+        cp=cp,
+        ##########
+        ZtZ = ZtZ,
+        ZtY = ZtY,
+        ZtX = ZtX,
+        XtY = XtY,
+        YtY = YtY,
+        XtX = XtX,
+        Sn_inv = Sn_inv,
+        eta = eta,
+        DtY = DtY,
+        DtD = DtD,
+        SnD_inv = SnD_inv,
+        b = b,###the sample size of current data batch
+        Nb = 0 + b ###cumulative sample size
+      )
+    }
+    result[(i-1)*nBatch+ib,1]=list_Allbatch$the_est
+    result[(i-1)*nBatch+ib,2]=list_Allbatch$the_est-signal_strength
+    result[(i-1)*nBatch+ib,3]=sqrt(list_Allbatch$the_sigma_beta)
+    result[(i-1)*nBatch+ib,4]=list_Allbatch$CI[1]
+    result[(i-1)*nBatch+ib,5]=list_Allbatch$CI[2]
+    result[(i-1)*nBatch+ib,6]=list_Allbatch$cp
+    result[(i-1)*nBatch+ib,7]=list_Allbatch$the_sigma
+
+    ######From ib = 2, we have to update the qunatities
+
+    for(ib in 21:nBatch){
+      #print(c('ib',ib))
+      LastRound = list_Allbatch
+
+      the_sigma_n = LastRound$the_sigma
+      the_est_n = LastRound$the_est
+      eta_n = LastRound$eta
+
+
+      ZtZ_n = LastRound$ZtZ
+      ZtY_n = LastRound$ZtY
+      ZtX_n = LastRound$ZtX
+      XtY_n = LastRound$XtY
+      XtX_n = LastRound$XtX
+      YtY_n = LastRound$YtY
+      Sn_inv_n = LastRound$Sn_inv
+      DtY_n = LastRound$DtY
+      DtD_n = LastRound$DtD
+      SnD_inv_n = LastRound$SnD_inv
+      Nb_n = LastRound$Nb ###cumulative sample size
+
+
+      #update rule of inner product of vector. for all but Sn_inv and SnD_inv_n
+
+      #Now data
+      data_ib = Data_inBatch[[ib]]
+      D = matrix(data_ib$Xb,ncol=P_control)
+      Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+      Z = as.matrix(D[,1],length(D[,1]),1)
+      X = matrix(D[,2:ncol(D)],ncol=P_control-1)
+      b = nrow(X)
+      Nb = b + Nb_n
+      ZtZ = ZtZ_n + t(Z)%*%Z
+      ZtY = ZtY_n + t(Z)%*%Y
+      ZtX = ZtX_n + t(Z)%*%X
+      XtY = XtY_n + t(X)%*%Y
+      YtY = YtY_n + t(Y)%*%Y
+      XtX = XtX_n + t(X)%*%X
+      DtY = DtY_n + t(D)%*%Y
+      DtD = DtD_n + t(D)%*%D
+
+      # Sn_inv_n  to Sn_inv_n
+
+      #with  Woodbury_Matrix_Identity
+      dim(diag(nrow(X))+ X%*%Sn_inv_n%*%t(X))
+      Sn_inv = Sn_inv_n - Sn_inv_n%*%t(X)%*%solve( diag(nrow(X))+ X%*%Sn_inv_n%*%t(X))%*%X%*%Sn_inv_n
+      max(abs(Sn_inv - Sn_inv_n))
+      SnD_inv = SnD_inv_n - SnD_inv_n%*%t(D)%*%solve( diag(nrow(D))+ D%*%SnD_inv_n%*%t(D) )%*%D%*%SnD_inv_n
+      ##################################################3
+      The_numeritor = ZtY - ZtX%*%Sn_inv%*%XtY
+      The_donominator = ZtZ - ZtX%*%Sn_inv%*%t(ZtX)
+      the_est = The_numeritor/The_donominator
+      the_est
+
+      
+      Sigma_numeritor = ZtZ - 2* ZtX%*%Sn_inv%*%t(ZtX) + ZtX%*%Sn_inv%*%XtX%*%Sn_inv%*%t(ZtX)
+    
+      Sigma_denominator=ZtZ^2 - 2*ZtZ*ZtX%*%Sn_inv%*%t(ZtX)+ZtX%*%Sn_inv%*%t(ZtX)%*%ZtX%*%Sn_inv%*%t(ZtX)
+
+       the_sigmacheck = (YtY - t(DtY)%*%SnD_inv%*%DtY) /Nb
+      trAn  =  tr(SnD_inv%*%DtD)
+
+      the_sigma = (1-Nb^{-1}*trAn)^{-1}*the_sigmacheck
+      the_sigma_beta = (Sigma_numeritor/Sigma_denominator)*the_sigma
+      if(the_sigma_beta<0){the_sigma_beta=LastRound$the_sigma_beta}
+
+
+      quantile_alpha = qnorm(1-sig_level/2,mean=0,sd = 1,lower.tail=TRUE)
+      upper_bound = the_est + quantile_alpha * (the_sigma_beta)^0.5
+      lower_bound = the_est - quantile_alpha * (the_sigma_beta)^0.5
+      p_value = 1 - pchisq((  (the_est-signal_strength)/(the_sigma_beta)^0.5 )^2,df=1)
+      CI = c(lower_bound,upper_bound)
+      cp=(signal_strength>=lower_bound)*(signal_strength<=upper_bound)
+      print(c("ib",ib,"est",the_est,"sigma",the_sigma_beta))
+      print(c("CI",CI))
+      list_Allbatch = list(
+        the_sigma_beta= the_sigma_beta,
+        the_est = the_est,
+        p_value= p_value,
+        the_sigma= the_sigma,
+        CI = CI,
+        cp=cp,
+        ##########
+        ZtZ = ZtZ,
+        ZtY = ZtY,
+        ZtX = ZtX,
+        XtY = XtY,
+        YtY = YtY,
+        XtX = XtX,
+        Sn_inv = Sn_inv,
+        eta = eta,
+        DtY = DtY,
+        DtD = DtD,
+        SnD_inv = SnD_inv,
+        b = b,###the sample size of current data batch
+        Nb = Nb ###cumulative sample size
+      )
+      result[(i-1)*nBatch+ib,1]=list_Allbatch$the_est
+      result[(i-1)*nBatch+ib,2]=list_Allbatch$the_est-signal_strength
+      result[(i-1)*nBatch+ib,3]=sqrt(list_Allbatch$the_sigma_beta)
+      result[(i-1)*nBatch+ib,4]=list_Allbatch$CI[1]
+      result[(i-1)*nBatch+ib,5]=list_Allbatch$CI[2]
+      result[(i-1)*nBatch+ib,6]=list_Allbatch$cp
+      result[(i-1)*nBatch+ib,7]=list_Allbatch$the_sigma
+
+    }
+}
+result1=matrix(0,nBatch,6)
+idx1=which(is.na(result),arr.ind=TRUE)
+for (i in 1:nBatch) {
+  idx=(1:simu_n)*nBatch-nBatch+i
+  result1[i,1]=mean(result[idx,1])
+  result1[i,2]=mean(abs(result[idx,2]))
+  result1[i,3]=mean(result[idx,3])
+  result1[i,4]=mean(result[idx,4])
+  result1[i,5]=mean(result[idx,5])
+  result1[i,6]=mean(result[idx,6])
+}
+result1=result1[(1:20)*25,]
+colnames(result1)=c("est","bias","sd","upper","lower","p-value")
+file.create("~/fig_ridge_p1000one.txt")
+sink("~/fig_ridge_p1000one.txt",append=TRUE)
+print(result1)
+sink()
+
+############### class model ######################
+
+nBatch = 500
+simu_n=1
+result=matrix(0,nBatch*simu_n,7)
+all_result=matrix(0,simu_n,7)
+colnames(all_result) =  c("est","bias","sd","CI_lower","CI_upper","p-value","err_sig")
+for (i in 1:simu_n) {
+  {
+    b = 1
+    N = b* nBatch
+    P_control = 1000
+
+    lam=0.1
+
+    sig_level<- 0.05
+    the_rhop = 0.5
+    P_hidden <- 3
+    error_sigma <- 5
+
+    beta_setting <- list(
+      c("Nonsparse", 0.5, sqrt(0.1 / (P_control*0.5)), 1) # (type,ratioOfNonzero,coeff_of_control,coeff_of_interest)
+    )[[1]]
+    beta_type <- beta_setting[1]
+    beta_ratio = as.numeric(beta_setting[2])
+    beta_coeff <- as.numeric(beta_setting[3])
+
+    if (beta_type == "Nonsparse") {
+      num_nonzero <- floor(P_control * as.numeric(beta_ratio))
+      num_zero <- P_control - num_nonzero
+
+      beta <- c(rep(beta_coeff, num_nonzero), rep(0, num_zero))
+    }
+    signal_strength <- as.numeric(beta_setting[4])
+    beta[1] <- signal_strength
+
+    one_over_sqrtp <- round(1 / sqrt(P_control), 2)
+
+    Sigma_type <- "CONS"
+    Sigma_rho <- 0.3
+    #############################
+
+    #####################################################################################
+    # generate Sigma and E
+    if (Sigma_type == "CONS") {
+      SigmaX <- matrix(Sigma_rho, P_control, P_control)
+      diag(SigmaX) <- rep(1, P_control)
+
+      E <- mnormt::rmnorm(N, mean = rep(0, P_control), varcov = SigmaX)
+    }
+    X <- E 
+    epsilon <- matrix(rnorm(N * 1, mean = 0, sd = 1), N, 1, byrow = TRUE)*sqrt(error_sigma)
+    # eq. (1), the response of the Structural Equation Model
+    if(1){
+      SNR = 1
+      bet <- c(rnorm(20,0,1), rep(0, P_control-20))
+      bet[1]=signal_strength
+      c=(SNR*error_sigma-signal_strength^2*cov(X)[1,1])/(t(bet[-1])%*%cov(X)[-1,-1]%*%bet[-1])
+      bet[-1]=bet[-1]*sqrt(c)[1,1]
+      beta = bet
+    }
+    Y <- X %*% beta+ epsilon
+    data <- list(Y = Y, X = X)
+
+    Y <- data$Y
+    X <- data$X
+    Y11 <- data$Y
+    X11 <- data$X
+  }
+    Ind_begin = seq(1,N,b)
+    Data_inBatch = list()
+    for(ib in 1:nBatch){
+      b_begin = Ind_begin[ib]
+      b_end = Ind_begin[ib]+b-1
+      print(c(b_begin,b_end))
+      b_index = b_begin:b_end
+      Yb = Y[b_index]
+      Xb = X[b_index,]
+      Data_inBatch[[ib]] = list(Yb=Yb,Xb=Xb)
+    }
+    length(Data_inBatch)
+    length(Data_inBatch[[1]]$Yb)
+
+    #print(c("The batch sequence",1:nBatch))
+    inx = 1
+
+    #We need the following quantities saved
+    list_Allbatch = list()
+    #####################################################
+    t1=Sys.time()
+    if(1){
+      ib = 1
+      data_ib = Data_inBatch[[ib]]
+      D = matrix(data_ib$Xb,ncol=P_control)
+      Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+      for(ib in 2:20){
+        data_ib = Data_inBatch[[ib]]
+        D=rbind(D,data_ib$Xb)
+        Y=rbind(Y,data_ib$Yb)
+      }
+      Z = as.matrix(D[,1],length(D[,1]),1)
+      X = D[,2:ncol(D)]
+      b = nrow(X)
+      Nb = 0 + b
+      X1 = X
+      Z1 = Z
+      Y1 = Y
+      D1 = D
+      
+
+
+      ##quantities need to save
+      ZtZ = t(Z)%*%Z
+      ZtY = t(Z)%*%Y
+      ZtX = t(Z)%*%X
+      XtY = t(X)%*%Y
+      XtX = t(X)%*%X
+      YtY = t(Y)%*%Y
+      DtY = t(D)%*%Y
+      DtD = t(D)%*%D
+      #eta = lam*max(abs(t(Y)%*%D))/(nrow(D)*ncol(D))
+      #eta = lam*max(abs(cov(Y,D)))/(ncol(D))
+      eta = 10*max(abs(cov(Y,D)))/(ncol(D))
+      dim(ZtX)
+      dim(XtY)
+      if(1){
+        #Sn^{-1}
+        X2_re  = chol2inv(chol(X %*% t(X) + eta * diag(nrow(X))))
+        Sn_inv= 1 / eta * (diag(ncol(X)) - t(X) %*% X2_re %*%X )
+      }
+      # Sn_inv= solve(XtX + eta*diag(ncol(X)))
+      #Sn_inv= solve(XtX + eta*diag(ncol(X)))
+      if(1){
+        #Sn^{-1}
+        X2_re  = chol2inv(chol(D %*% t(D) + eta * diag(nrow(D))))
+        SnD_inv= 1 / eta * (diag(ncol(D)) - t(D) %*% X2_re %*%D)
+      }
+
+
+      The_numeritor = ZtY - ZtX%*%Sn_inv%*%XtY
+      The_donominator = ZtZ - ZtX%*%Sn_inv%*%t(ZtX)
+      the_est = The_numeritor/The_donominator
+      the_est
+
+
+      dg=(diag(nrow(X))-(X)%*%Sn_inv%*%t(X))
+      Sigma_numeritor =t(Z)%*%dg%*%dg%*%Z
+      #Sigma_numeritor = ZtZ - 2* ZtX%*%Sn_inv%*%t(ZtX) + ZtX%*%Sn_inv%*%XtX%*%Sn_inv%*%t(ZtX)
+      #Sigma_numeritor = ZtZ + ZtX%*%Sn_inv%*%(XtX%*%Sn_inv-2*diag(nrow(XtX)))%*%t(ZtX)
+      #Sigma_denominator =The_donominator^2
+      Sigma_denominator=ZtZ^2 - 2*ZtZ*ZtX%*%Sn_inv%*%t(ZtX)+ZtX%*%Sn_inv%*%t(ZtX)%*%ZtX%*%Sn_inv%*%t(ZtX)
+
+      the_sigmacheck = (YtY - t(DtY)%*%SnD_inv%*%DtY) /Nb
+      trAn  =  tr(SnD_inv%*%DtD)
+
+      the_sigma = (1-Nb^{-1}*trAn)^{-1}*the_sigmacheck
+
+      the_sigma_beta = Sigma_numeritor/Sigma_denominator*the_sigma
+      #print(c("ib",ib,"est",the_est,"sigma",the_sigma_beta))
+
+      quantile_alpha = qnorm(1-sig_level/2,mean=0,sd = 1,lower.tail=TRUE)
+      upper_bound = the_est + quantile_alpha * (the_sigma_beta)^0.5
+      lower_bound = the_est - quantile_alpha * (the_sigma_beta)^0.5
+      p_value = 1 - pchisq(((the_est-signal_strength)/(the_sigma_beta)^0.5 )^2,df=1)
+      CI = c(lower_bound,upper_bound)
+      cp=(signal_strength>=lower_bound)*(signal_strength<=upper_bound)
+      #print(CI)
+      list_Allbatch= list(
+        the_sigma_beta= the_sigma_beta,
+        the_sigma= the_sigma,
+        the_est = the_est,
+        p_value= p_value,
+        CI = CI,
+        cp=cp,
+        ##########
+        ZtZ = ZtZ,
+        ZtY = ZtY,
+        ZtX = ZtX,
+        XtY = XtY,
+        YtY = YtY,
+        XtX = XtX,
+        Sn_inv = Sn_inv,
+        eta = eta,
+        DtY = DtY,
+        DtD = DtD,
+        SnD_inv = SnD_inv,
+        b = b,###the sample size of current data batch
+        Nb = 0 + b ###cumulative sample size
+      )
+    }
+    result[(i-1)*nBatch+ib,1]=list_Allbatch$the_est
+    result[(i-1)*nBatch+ib,2]=list_Allbatch$the_est-signal_strength
+    result[(i-1)*nBatch+ib,3]=sqrt(list_Allbatch$the_sigma_beta)
+    result[(i-1)*nBatch+ib,4]=list_Allbatch$CI[1]
+    result[(i-1)*nBatch+ib,5]=list_Allbatch$CI[2]
+    result[(i-1)*nBatch+ib,6]=list_Allbatch$cp
+    result[(i-1)*nBatch+ib,7]=list_Allbatch$the_sigma
+
+    ######From ib = 2, we have to update the qunatities
+
+    for(ib in 21:nBatch){
+      #print(c('ib',ib))
+      LastRound = list_Allbatch
+
+      the_sigma_n = LastRound$the_sigma
+      the_est_n = LastRound$the_est
+      eta_n = LastRound$eta
+
+
+      ZtZ_n = LastRound$ZtZ
+      ZtY_n = LastRound$ZtY
+      ZtX_n = LastRound$ZtX
+      XtY_n = LastRound$XtY
+      XtX_n = LastRound$XtX
+      YtY_n = LastRound$YtY
+      Sn_inv_n = LastRound$Sn_inv
+      DtY_n = LastRound$DtY
+      DtD_n = LastRound$DtD
+      SnD_inv_n = LastRound$SnD_inv
+      Nb_n = LastRound$Nb ###cumulative sample size
+
+
+      #update rule of inner product of vector. for all but Sn_inv and SnD_inv_n
+
+      #Now data
+      data_ib = Data_inBatch[[ib]]
+      D = matrix(data_ib$Xb,ncol=P_control)
+      Y = as.matrix(data_ib$Yb,length(data_ib$Yb),1)
+      Z = as.matrix(D[,1],length(D[,1]),1)
+      X = matrix(D[,2:ncol(D)],ncol=P_control-1)
+      b = nrow(X)
+      Nb = b + Nb_n
+      ZtZ = ZtZ_n + t(Z)%*%Z
+      ZtY = ZtY_n + t(Z)%*%Y
+      ZtX = ZtX_n + t(Z)%*%X
+      XtY = XtY_n + t(X)%*%Y
+      YtY = YtY_n + t(Y)%*%Y
+      XtX = XtX_n + t(X)%*%X
+      DtY = DtY_n + t(D)%*%Y
+      DtD = DtD_n + t(D)%*%D
+
+      # Sn_inv_n  to Sn_inv_n
+
+      #with  Woodbury_Matrix_Identity
+      dim(diag(nrow(X))+ X%*%Sn_inv_n%*%t(X))
+      Sn_inv = Sn_inv_n - Sn_inv_n%*%t(X)%*%solve( diag(nrow(X))+ X%*%Sn_inv_n%*%t(X))%*%X%*%Sn_inv_n
+      max(abs(Sn_inv - Sn_inv_n))
+      SnD_inv = SnD_inv_n - SnD_inv_n%*%t(D)%*%solve( diag(nrow(D))+ D%*%SnD_inv_n%*%t(D) )%*%D%*%SnD_inv_n
+      ##################################################3
+      The_numeritor = ZtY - ZtX%*%Sn_inv%*%XtY
+      The_donominator = ZtZ - ZtX%*%Sn_inv%*%t(ZtX)
+      the_est = The_numeritor/The_donominator
+      the_est
+
+      
+      Sigma_numeritor = ZtZ - 2* ZtX%*%Sn_inv%*%t(ZtX) + ZtX%*%Sn_inv%*%XtX%*%Sn_inv%*%t(ZtX)
+    
+      Sigma_denominator=ZtZ^2 - 2*ZtZ*ZtX%*%Sn_inv%*%t(ZtX)+ZtX%*%Sn_inv%*%t(ZtX)%*%ZtX%*%Sn_inv%*%t(ZtX)
+
+       the_sigmacheck = (YtY - t(DtY)%*%SnD_inv%*%DtY) /Nb
+      trAn  =  tr(SnD_inv%*%DtD)
+
+      the_sigma = (1-Nb^{-1}*trAn)^{-1}*the_sigmacheck
+      the_sigma_beta = (Sigma_numeritor/Sigma_denominator)*the_sigma
+      if(the_sigma_beta<0){the_sigma_beta=LastRound$the_sigma_beta}
+
+
+      quantile_alpha = qnorm(1-sig_level/2,mean=0,sd = 1,lower.tail=TRUE)
+      upper_bound = the_est + quantile_alpha * (the_sigma_beta)^0.5
+      lower_bound = the_est - quantile_alpha * (the_sigma_beta)^0.5
+      p_value = 1 - pchisq((  (the_est-signal_strength)/(the_sigma_beta)^0.5 )^2,df=1)
+      CI = c(lower_bound,upper_bound)
+      cp=(signal_strength>=lower_bound)*(signal_strength<=upper_bound)
+      print(c("ib",ib,"est",the_est,"sigma",the_sigma_beta))
+      print(c("CI",CI))
+      list_Allbatch = list(
+        the_sigma_beta= the_sigma_beta,
+        the_est = the_est,
+        p_value= p_value,
+        the_sigma= the_sigma,
+        CI = CI,
+        cp=cp,
+        ##########
+        ZtZ = ZtZ,
+        ZtY = ZtY,
+        ZtX = ZtX,
+        XtY = XtY,
+        YtY = YtY,
+        XtX = XtX,
+        Sn_inv = Sn_inv,
+        eta = eta,
+        DtY = DtY,
+        DtD = DtD,
+        SnD_inv = SnD_inv,
+        b = b,###the sample size of current data batch
+        Nb = Nb ###cumulative sample size
+      )
+      result[(i-1)*nBatch+ib,1]=list_Allbatch$the_est
+      result[(i-1)*nBatch+ib,2]=list_Allbatch$the_est-signal_strength
+      result[(i-1)*nBatch+ib,3]=sqrt(list_Allbatch$the_sigma_beta)
+      result[(i-1)*nBatch+ib,4]=list_Allbatch$CI[1]
+      result[(i-1)*nBatch+ib,5]=list_Allbatch$CI[2]
+      result[(i-1)*nBatch+ib,6]=list_Allbatch$cp
+      result[(i-1)*nBatch+ib,7]=list_Allbatch$the_sigma
+
+    }
+}
+result1=matrix(0,nBatch,6)
+idx1=which(is.na(result),arr.ind=TRUE)
+for (i in 1:nBatch) {
+  idx=(1:simu_n)*nBatch-nBatch+i
+  result1[i,1]=mean(result[idx,1])
+  result1[i,2]=mean(abs(result[idx,2]))
+  result1[i,3]=mean(result[idx,3])
+  result1[i,4]=mean(result[idx,4])
+  result1[i,5]=mean(result[idx,5])
+  result1[i,6]=mean(result[idx,6])
+}
+result1=result1[(1:20)*25,]
+colnames(result1)=c("est","bias","sd","upper","lower","p-value")
+file.create("~/fig_ridge_p1000one_noc.txt")
+sink("~/fig_ridge_p1000one_noc.txt",append=TRUE)
+print(result1)
+sink()
