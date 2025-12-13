@@ -7,7 +7,32 @@ df <- read.arff("~/R/online_lasso/real_data/scm1d.arff")
 batch_sizes <- table(df$timeunit)
 # 累积样本数
 cum_sizes <- cumsum(batch_sizes)
-
+alpha_bh=0.1
+jj_threshold <- function(T, alpha_bh) {
+  p <- length(T)
+  absT <- abs(T)
+  
+  # Step 1: define tp
+  tp <- sqrt(2 * log(p) - 2 * log(log(p)))
+  # Step 2: search t0
+  # candidate thresholds between 0 and tp
+  thresh <- sort(unique(c(seq(0, tp, length.out = 200),absT)), decreasing = FALSE)
+  R_t <- sapply(thresh, function(t) sum(absT >= t))
+  FDPhat <- (2 * p * (1 - pnorm(thresh))) / pmax(R_t, 1)
+  
+  idx <- which(FDPhat <= alpha_bh & thresh <= tp)
+  
+  if (length(idx) == 0) {
+    # fallback threshold
+    t0 <- sqrt(2 * log(p))
+  } else {
+    t0 <- min(thresh[idx])
+  }
+  
+  # Step 3: reject
+  rejs <- which(absT >= t0)
+  return(rejs)
+}
 ######################################################
 #################### RidgeInfer method ###############
 ######################################################
@@ -220,25 +245,14 @@ file_path <- paste0("~/real_data/ridge_1.rds")
 ## 选取变量
 data <- readRDS(file_path)
 reject_list=list()
+
 for (iib in 1:208) {
   alpha_p=data[[iib]]$alpha_hat
   se_p=data[[iib]]$se_hat
   T=alpha_p/se_p
-  pval_vec <- 2 * (1 - pnorm(abs(T)))
-  o_bh <- order(pval_vec, decreasing = FALSE)
-  p_sorted <- pval_vec[o_bh]
-  k_vec <- seq_len(279)
-  thresh <- (k_vec / 279) * 0.1
-  compare <- p_sorted <= thresh
-  if (any(compare)) {
-    k_star <- max(which(compare))
-    reject_idx_sorted <- o_bh[seq_len(k_star)]
-  } else {
-    k_star <- 0
-    reject_idx_sorted <- integer(0)
-  }
-  R_vec <- integer(280)
-  if (k_star > 0) R_vec[reject_idx_sorted] <- 1
+  R_vec <- integer(279)
+  rej<-jj_threshold(T,alpha_bh)
+  if(length(rej)>0){R_vec[rej]=1}
   reject_list[[iib]]=R_vec
 }
 sapply(reject_list, sum)
@@ -422,25 +436,14 @@ file_path <- paste0("~/R/ridge/real_data/dsgd_1.rds")
 ## 选取变量
 data <- readRDS(file_path)
 reject_list=list()
+
 for (iib in 1:208) {
   alpha_p=data$alpha_hat[,iib]
   se_p=data$se_hat[,iib]
   T=alpha_p/se_p
-  pval_vec <- 2 * (1 - pnorm(abs(T)))
-  o_bh <- order(pval_vec, decreasing = FALSE)
-  p_sorted <- pval_vec[o_bh]
-  k_vec <- seq_len(279)
-  thresh <- (k_vec / 279) * 0.1
-  compare <- p_sorted <= thresh
-  if (any(compare)) {
-    k_star <- max(which(compare))
-    reject_idx_sorted <- o_bh[seq_len(k_star)]
-  } else {
-    k_star <- 0
-    reject_idx_sorted <- integer(0)
-  }
-  R_vec <- integer(280)
-  if (k_star > 0) R_vec[reject_idx_sorted] <- 1
+  R_vec <- integer(279)
+  rej<-jj_threshold(T,alpha_bh)
+  if(length(rej)>0){R_vec[rej]=1}
   reject_list[[iib]]=R_vec
 }
 sapply(reject_list, sum)
