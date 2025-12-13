@@ -1,0 +1,131 @@
+jj_threshold <- function(T, alpha_bh) {
+  p <- length(T)
+  absT <- abs(T)
+  
+  # Step 1: define tp
+  tp <- sqrt(2 * log(p) - 2 * log(log(p)))
+  # Step 2: search t0
+  # candidate thresholds between 0 and tp
+  thresh <- sort(unique(c(seq(0, tp, length.out = 200),absT)), decreasing = FALSE)
+  R_t <- sapply(thresh, function(t) sum(absT >= t))
+  FDPhat <- (2 * p * (1 - pnorm(thresh))) / pmax(R_t, 1)
+  
+  idx <- which(FDPhat <= alpha_bh & thresh <= tp)
+  
+  if (length(idx) == 0) {
+    # fallback threshold
+    t0 <- sqrt(2 * log(p))
+  } else {
+    t0 <- min(thresh[idx])
+  }
+  
+  # Step 3: reject
+  rejs <- which(absT >= t0)
+  return(rejs)
+}
+
+compute_fdr_power <- function(rejects_list, true_nonnulls, p) {
+  L <- length(rejects_list)
+  H0 <- setdiff(1:p, true_nonnulls)  # 真零假设
+  
+  fdr <- numeric(L)
+  power <- numeric(L)
+  
+  for (l in 1:L) {
+    Rl <- rejects_list[[l]]
+    
+    false_disc <- sum(which(Rl==1) %in% H0)
+    true_disc <- sum(which(Rl==1) %in% true_nonnulls)
+    
+    fdr[l] <- false_disc / max(length(Rl), 1)
+    power[l] <- true_disc / length(true_nonnulls)
+  }
+  
+  return(data.frame(batch = 1:L, FDR = fdr, Power = power))
+}
+alpha_bh=0.1
+
+num_nonzero=20
+P_control=1000
+simu_n=100
+alpha_bh=0.1
+Fdr_ridge=matrix(0,simu_n,20)
+Power_ridge=matrix(0,simu_n,20)
+for (i in 1:simu_n) {
+  file_path <- paste0("~/fdr_1000/simu-", i, "-.rds")
+  # 读取文件
+  data <- readRDS(file_path)
+  true_nonnulls <- 1:num_nonzero
+  rejects_list=list()
+  for (iib in 1:20) {
+    alpha_p=data[[iib]]$alpha_hat
+    se_p=data[[iib]]$se_hat
+    T=alpha_p/se_p
+    R_vec <- integer(P_control)
+    rej<-jj_threshold(T,alpha_bh)
+    if(length(rej)>0){R_vec[rej]=1}
+    rejects_list[[iib]]=R_vec
+  }
+  res <- compute_fdr_power(rejects_list, true_nonnulls, P_control)
+  res
+  Fdr_ridge[i,]=res$FDR
+  Power_ridge[i,]=res$Power
+}
+
+
+Fdr_dsgd=matrix(0,simu_n,20)
+Power_dsgd=matrix(0,simu_n,20)
+
+for (i in 1:simu_n) {
+  file_path <- paste0("~/dsgd_fdr_1000/simu-", i, "-.rds")
+  # 读取文件
+  data <- readRDS(file_path)
+  true_nonnulls <- 1:num_nonzero
+  rejects_list=list()
+  for (jj in 1:20) {
+    alpha_p=data$alpha_hat[,jj]
+    se_p=data$se_hat[,jj]
+    T=alpha_p/se_p
+    R_vec <- integer(P_control)
+    rej<-jj_threshold(T,alpha_bh)
+    if(length(rej)>0){R_vec[rej]=1}
+    rejects_list[[jj]]=R_vec
+  }
+  
+  res <- compute_fdr_power(rejects_list, true_nonnulls, P_control)
+  Fdr_dsgd[i,]=res$FDR
+  Power_dsgd[i,]=res$Power
+}
+
+### plot ####
+  df1 <- data.frame(batch_numer=(1:20)*25,Value=apply(Fdr_dsgd, 2, mean),Method=rep("DSGD",20))
+  df2 <- data.frame(batch_numer=(1:20)*25,Value=apply(Fdr_ridge, 2, mean),Method=rep("RidgeInfer",20))
+  df3=rbind(df1,df2)
+  exp1=expression(paste("(L,p,s,","|",beta,"|"[0],")=(500,1000,3,20)"))
+  p1=ggplot(df3, aes(x = batch_numer, y = Value, color = Method, group = Method,shape=Method)) +
+    geom_line(size = 0.8) +
+    geom_point(size = 1.5) +
+    scale_color_manual(values = c("RidgeInfer" = "#F8766D","DSGD" = "#619CFF")) +
+    labs(x = "Sample size", y = "FDR",title=exp1) +
+    theme_bw()+coord_cartesian(ylim = c(0, 0.2))+scale_x_continuous(breaks = (1:20)*25)+
+    geom_hline(yintercept = 0.1, linetype = "dashed", color = "black", size = 1) +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  df1 <- data.frame(batch_numer=(1:20)*25,Value=apply(Power_dsgd, 2, mean),Method=rep("DSGD",20))
+  df2 <- data.frame(batch_numer=(1:20)*25,Value=apply(Power_ridge, 2, mean),Method=rep("RidgeInfer",20))
+  df3=rbind(df1,df2)
+  p2=ggplot(df3, aes(x = batch_numer, y = Value, color = Method, group = Method,shape=Method)) +
+    geom_line(size = 0.8) +
+    geom_point(size = 1.5) +
+    scale_color_manual(values = c("RidgeInfer" = "#F8766D","DSGD" = "#619CFF")) +
+    labs(x = "Sample size", y = "Power",title=exp1) +
+    theme_bw()+coord_cartesian(ylim = c(0, 1))+scale_x_continuous(breaks = (1:20)*25)+
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+ggarrange(p1,p2,nrow=2,ncol=1,common.legend=TRUE)
