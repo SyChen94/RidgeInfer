@@ -1,0 +1,72 @@
+## figure 2 confouder 1 point ci  (top) unconfounder (bottom)
+
+{
+  est=read.table("~/R/online_lasso/fig_ridge_p1000one.txt",sep="")
+  est1=read.table("~/R/online_lasso/fig_dsgd_p1000one.txt",sep="")
+  library(tidyverse)
+  df <- data.frame(batch_numer=(1:20)*25,Estimation=est[,1],Upper=est[,4],Lower=est[,5],Method=rep("RidgeInfer",20))
+  df1 <- data.frame(batch_numer=(1:20)*25+3,Estimation=est1[,1],Upper=est1[,2],Lower=est1[,3],Method=rep("DSGD",20))
+
+  df3=rbind(df,df1)
+  exp1=expression(paste("(L,p,s,","|",beta,"|"[0],")=(500,1000,3,200)"))
+  p=ggplot(data = df3, mapping = aes(x = batch_numer, y = Estimation,color=Method,shape=Method),key_glyph="pointangle")+theme_bw() + geom_point(size=1.8)+coord_cartesian(ylim = c(0, 2))
+  p=p+geom_errorbar(aes(ymin = Lower, ymax = Upper,color=Method),width = 0.6, size =0.6)+geom_hline(yintercept=1,size=0.4,linetype="dashed",color="#000000")+labs(x="Sample size",y="",title=exp1)
+  p2=p+scale_color_manual(values = c("#619CFF","#F8766D"))+theme(plot.title=element_text(size=13,face ="bold"),
+                                                                           axis.text.x = element_text(face = "bold"),
+                                                                           axis.text.y = element_text(face = "bold")
+                                                                           )+scale_x_continuous(breaks = (1:20)*25)
+  
+  est=read.table("~/R/online_lasso/fig_ridge_p1000one_noc.txt",sep="")
+  est1=read.table("~/R/online_lasso/fig_dsgd_p1000one_noc.txt",sep="")
+  library(tidyverse)
+  df <- data.frame(batch_numer=(1:20)*25,Estimation=est[,1],Upper=est[,4],Lower=est[,5],Method=rep("RidgeInfer",20))
+  df1 <- data.frame(batch_numer=(1:20)*25+3,Estimation=est1[,1],Upper=est1[,2],Lower=est1[,3],Method=rep("DSGD",20))
+  df3=rbind(df,df1)
+  exp1=expression(paste("(L,p,s,","|",beta,"|"[0],")=(300,1000,0,20)"))
+  p=ggplot(data = df3, mapping = aes(x = batch_numer, y = Estimation,color=Method,shape=Method),key_glyph="pointangle")+theme_bw() + geom_point(size=1.8)+coord_cartesian(ylim = c(0, 2))
+  p=p+geom_errorbar(aes(ymin = Lower, ymax = Upper,color=Method),width = .6, size =0.6)+geom_hline(yintercept=1,size=0.4,linetype="dashed",color="#000000")+labs(x="Sample size",y="",title=exp1)
+  
+  p3=p+scale_color_manual(values = c("#619CFF","#F8766D"))+scale_x_continuous(breaks = (1:20)*25)+theme(plot.title=element_text(size=13,face ="bold"),
+                                                                                                                  axis.text.x = element_text(face = "bold"),
+                                                                                                                  axis.text.y = element_text(face = "bold")
+  )
+  library(ggpubr)
+  ggarrange(p2,p3,nrow=2,ncol=1,common.legend=TRUE)
+}
+
+
+## figure 3 confouder 1 point cp  (top) unconfounder (bottom)
+
+{
+  est=read.table("~/R/online_lasso/fig_ridge_p1000one.txt",sep="")
+  est1=read.table("~/R/online_lasso/fig_dsgd_p1000one.txt",sep="")
+  library(tidyverse)
+  df <- data.frame(batch_numer=(1:20)*25,CP=est[,6],Method=rep("RidgeInfer",20))
+  df1 <- data.frame(batch_numer=(1:20)*25,CP=est1[,4],Method=rep("DSGD",20))
+  df3=rbind(df,df1)
+  exp1=expression(paste("(L,p,s,","|",beta,"|"[0],")=(300,1000,3,200)"))
+  p=ggplot(data = df3, mapping = aes(x = batch_numer, y = CP,color=Method,shape=Method),key_glyph="pointangle")+theme_bw() + geom_point(size=2)+geom_line(size=0.5)+coord_cartesian(ylim = c(0.5,1))+labs(x="Sample size",y="CP",title=exp1)
+  p2=p+scale_color_manual(values = c("#619CFF","#F8766D"))+theme(plot.title=element_text(size=13,face ="bold"),
+                                                                           axis.text.x = element_text(face = "bold"),
+                                                                           axis.text.y = element_text(face = "bold")
+  )+scale_x_continuous(breaks = (1:20)*25)
+  
+  est=read.table("~/R/online_lasso/fig_ridge_p1000one_noc.txt",sep="")
+  est1=read.table("~/R/online_lasso/fig_dsgd_p1000one_noc.txt",sep="")
+  library(tidyverse)
+  df <- data.frame(batch_numer=(1:20)*25,CP=est[,6],Method=rep("RidgeInfer",20))
+  df1 <- data.frame(batch_numer=(1:20)*25,CP=est1[,4],Method=rep("DSGD",20))
+  #df2 <- data.frame(batch_numer=(1:20)*25,CP=est2[,6],Method=rep("DML",20))
+  df3=rbind(df,df1)
+  exp1=expression(paste("(L,p,s,","|",beta,"|"[0],")=(300,1000,0,20)"))
+  p=ggplot(data = df3, mapping = aes(x = batch_numer, y = CP,color=Method,shape=Method),key_glyph="pointangle")+theme_bw() + geom_point(size=2)+geom_line(size=0.5)+coord_cartesian(ylim = c(0.5,1))+labs(x="Sample size",y="CP",title=exp1)
+  p3=p+scale_color_manual(values = c("#619CFF","#F8766D"))+theme(plot.title=element_text(size=13,face ="bold"),
+                                                                           axis.text.x = element_text(face = "bold"),
+                                                                           axis.text.y = element_text(face = "bold")
+  )+scale_x_continuous(breaks = (1:20)*25)
+  
+  
+  
+  library(ggpubr)
+  ggarrange(p2,p3,nrow=2,ncol=1,common.legend=TRUE)
+}
