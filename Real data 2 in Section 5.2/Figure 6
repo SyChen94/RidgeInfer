@@ -1,0 +1,134 @@
+library(tidyverse)
+library(randomForest)
+library(dplyr)
+library(foreign)
+# 读取文件
+df <- read.arff("~/R/online_lasso/real_data1/scm1d.arff")
+
+## number of rejection
+alpha_bh=0.1
+jj_threshold <- function(T, alpha_bh) {
+  p <- length(T)
+  absT <- abs(T)
+  
+  # Step 1: define tp
+  tp <- sqrt(2 * log(p) - 2 * log(log(p)))
+  # Step 2: search t0
+  # candidate thresholds between 0 and tp
+  thresh <- sort(unique(c(seq(0, tp, length.out = 200),absT)), decreasing = FALSE)
+  R_t <- sapply(thresh, function(t) sum(absT >= t))
+  FDPhat <- (2 * p * (1 - pnorm(thresh))) / pmax(R_t, 1)
+  
+  idx <- which(FDPhat <= alpha_bh & thresh <= tp)
+  
+  if (length(idx) == 0) {
+    # fallback threshold
+    t0 <- sqrt(2 * log(p))
+  } else {
+    t0 <- min(thresh[idx])
+  }
+  
+  # Step 3: reject
+  rejs <- which(absT >= t0)
+  return(rejs)
+}
+
+file_path <- paste0("~/real_data/ridge_1.rds")
+# 读取文件
+data <- readRDS(file_path)
+rejects_list=list()
+for (iib in 1:length(cum_sizes)){
+  alpha_p=data[[iib]]$alpha_hat
+  se_p=data[[iib]]$se_hat
+  T=alpha_p/se_p
+  R_vec <- integer(279)
+  rej<-jj_threshold(T,alpha_bh)
+  if(length(rej)>0){R_vec[rej]=1}
+  rejects_list[[iib]]=R_vec
+}
+pro_rej_ja<-sapply(rejects_list, sum)
+
+file_path <- paste0("~/real_data/dsgd_1.rds")
+# 读取文件
+data <- readRDS(file_path)
+rejects_list=list()
+for (jj in 1:length(cum_sizes)) {
+  alpha_p=data$alpha_hat[,jj]
+  se_p=data$se_hat[,jj]
+  T=alpha_p/se_p
+  R_vec <- integer(279)
+  rej<-jj_threshold(T,alpha_bh)
+  if(length(rej)>0){R_vec[rej]=1}
+  rejects_list[[jj]]=R_vec
+}
+dsgd_rej_ja<-sapply(rejects_list, sum)
+
+
+time <- as.numeric(cum_sizes)
+df <- data.frame(
+  Time = rep(time, 2),
+  Value = c(pro_rej_ja,dsgd_rej_ja),
+  Method = rep(c("RidgeInfer", "DSGD"), each = 208)
+)
+## #74C476
+library(ggplot2)
+g1=ggplot(df, aes(x = Time, y = Value, color = Method, group = Method, linetype = Method)) +
+  geom_line(linewidth = 1) +
+  #geom_point(size = 1) +
+  scale_color_manual(values = c("DSGD" = "#619CFF", "RidgeInfer" = "#F8766D")) +
+  scale_linetype_manual(
+    values = c("RidgeInfer" = "solid", 
+               "DSGD" = "dashed")
+  ) +
+  labs(x = "Sample Size", y = "Number of Rejctions") +
+  theme_bw()+coord_cartesian(ylim = c(0, 280))+scale_x_continuous(breaks = as.numeric(cum_sizes)[c((1:20)*10,208)])+
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+
+### RMSE
+file_path <- paste0("~/real_data/dsgd_pred_selected_1.rds")
+data=readRDS(file_path)
+dsgd_pred_selected=matrix(0,208,length(data))
+for (i in 1:length(data)) {
+  dsgd_pred_selected[,i]=data[[i]]
+}
+apply(dsgd_pred_selected,1,mean)
+
+file_path <- paste0("~/real_data/pro_pred_selected_3.rds")
+data=readRDS(file_path)
+pro_pred_selected=matrix(0,208,length(data))
+for (i in 1:length(data)) {
+  pro_pred_selected[,i]=data[[i]]
+}
+apply(pro_pred_selected,1,mean)
+
+time <- as.numeric(cum_sizes)
+df <- data.frame(
+  Time = rep(time, 2),
+  Value = c(apply(pro_pred_selected,1,mean),apply(dsgd_pred_selected,1,mean)),
+  Method = rep(c("RidgeInfer_selected", "DSGD_selected"), each = 208)
+)
+
+library(ggplot2)
+g2=ggplot(df, aes(x = Time, y = Value, color = Method, group = Method,linetype = Method)) +
+  geom_line(size = 1) +
+  #geom_point(size = 1) +
+  scale_color_manual(values = c("DSGD_selected" = "#619CFF", "RidgeInfer_selected" = "#F8766D")) +
+  scale_linetype_manual(
+    values = c("RidgeInfer_selected" = "solid", 
+               "DSGD_selected" = "dashed")
+  ) +
+  labs(x = "Sample Size", y = "RMSE") +
+  theme_bw()+coord_cartesian(ylim = c(0, 1))+scale_x_continuous(breaks = as.numeric(cum_sizes)[c((1:20)*10,208)])+
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+ggarrange(g1,g2,nrow=2,ncol=1)
+
