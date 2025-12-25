@@ -24,6 +24,6 @@ This repository contains the code for the experiments reported in the main paper
 
 ## About
 Dr. GE and Dr. CHEN began this project during their doctoral studies at Shanghai University of Finance and Economics (SUFE).
-Dr. CHEN is now a postdoc researcher in USTC.
+Dr. CHEN is now an Associate Researcher in USTC.
 Dr. GE is now a postdoc fellow at DSAI, PolyU.
 Professors FENG, LI, and WU are faculty members of the School of Statistics and Data Science, SUFE.
